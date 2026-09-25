@@ -14,11 +14,14 @@ const summary = computed(() => {
 
 <template>
   <footer class="status-bar">
-    <span>{{ summary }}</span>
+    <span class="status-bar__item">
+      <span class="status-bar__dot"></span>
+      {{ summary }}
+    </span>
     <span v-if="store.currentAtoms.length" class="status-bar__meta">
       当前显示 {{ store.selectedWyckoffLetter }} 位置
     </span>
-    <span class="status-bar__fps">{{ store.fps }} FPS</span>
+    <span class="status-bar__fps mono">{{ store.fps }} FPS</span>
   </footer>
 </template>
 
@@ -28,10 +31,25 @@ const summary = computed(() => {
   align-items: center;
   gap: 16px;
   padding: 0 16px;
-  height: 30px;
+  height: 32px;
   font-size: 12px;
   color: #e5e7eb;
-  background: #1f2937;
+  background: linear-gradient(90deg, #111827, #1f2937);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.status-bar__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-bar__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.8);
 }
 
 .status-bar__meta {
@@ -40,6 +58,7 @@ const summary = computed(() => {
 
 .status-bar__fps {
   margin-left: auto;
+  color: #9ca3af;
   font-variant-numeric: tabular-nums;
 }
 </style>

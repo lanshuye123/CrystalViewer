@@ -23,9 +23,12 @@ const backgrounds: { label: string; value: BackgroundTheme }[] = [
 </script>
 
 <template>
-  <el-card class="settings" shadow="never">
+  <el-card class="settings glass-panel" shadow="never">
     <template #header>
-      <span class="settings__title">显示设置</span>
+      <div class="settings__header">
+        <span class="settings__dot"></span>
+        <span class="settings__title">显示设置</span>
+      </div>
     </template>
 
     <div class="settings__row">
@@ -51,6 +54,14 @@ const backgrounds: { label: string; value: BackgroundTheme }[] = [
         @change="
           (value: string | number | boolean) => update({ showSymmetryElements: Boolean(value) })
         "
+      />
+    </div>
+
+    <div class="settings__row">
+      <span>化学键</span>
+      <el-switch
+        :model-value="settings.showBonds"
+        @change="(value: string | number | boolean) => update({ showBonds: Boolean(value) })"
       />
     </div>
 
@@ -98,15 +109,44 @@ const backgrounds: { label: string; value: BackgroundTheme }[] = [
 </template>
 
 <style scoped>
+.settings {
+  --el-card-border-color: transparent;
+}
+
+.settings :deep(.el-card__header) {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settings :deep(.el-card__body) {
+  padding: 4px 14px 10px;
+}
+
+.settings__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 .settings__title {
   font-weight: 600;
+  font-size: 13px;
 }
 
 .settings__row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 0;
+  padding: 7px 0;
+  font-size: 13px;
 }
 
 .settings__block {
@@ -114,5 +154,11 @@ const backgrounds: { label: string; value: BackgroundTheme }[] = [
   flex-direction: column;
   gap: 6px;
   padding: 8px 0;
+  font-size: 13px;
+  border-top: 1px dashed var(--border-soft);
+}
+
+.settings__block:first-of-type {
+  border-top: none;
 }
 </style>

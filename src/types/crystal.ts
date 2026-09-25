@@ -84,6 +84,7 @@ export interface DisplaySettings {
   showCell: boolean
   showLabels: boolean
   showSymmetryElements: boolean
+  showBonds: boolean
   atomRadiusScale: number
   modelType: ModelType
   background: BackgroundTheme
@@ -93,6 +94,7 @@ export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
   showCell: true,
   showLabels: false,
   showSymmetryElements: false,
+  showBonds: true,
   atomRadiusScale: 0.5,
   modelType: 'ball-stick',
   background: 'dark',

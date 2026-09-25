@@ -30,3 +30,34 @@ const FALLBACK: ElementStyle = { color: '#b0b0b0', radius: 0.8 }
 export function elementStyle(element: string): ElementStyle {
   return ELEMENT_STYLES[element] ?? FALLBACK
 }
+
+/**
+ * Covalent radii (Å) used for bond detection. `X` is the demo pseudo-element
+ * and gets a carbon-like radius so bonds show up in the default structure.
+ */
+const COVALENT_RADII: Record<string, number> = {
+  X: 0.8,
+  H: 0.31,
+  C: 0.76,
+  N: 0.71,
+  O: 0.66,
+  F: 0.57,
+  Na: 1.66,
+  Mg: 1.41,
+  Al: 1.21,
+  Si: 1.11,
+  S: 1.05,
+  Cl: 1.02,
+  K: 2.03,
+  Ca: 1.76,
+  Ti: 1.6,
+  Fe: 1.32,
+  Cu: 1.32,
+  Zn: 1.22,
+}
+
+const FALLBACK_COVALENT_RADIUS = 0.75
+
+export function covalentRadius(element: string): number {
+  return COVALENT_RADII[element] ?? elementStyle(element).radius ?? FALLBACK_COVALENT_RADIUS
+}

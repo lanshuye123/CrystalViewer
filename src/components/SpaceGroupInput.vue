@@ -118,11 +118,14 @@ async function selectFromList(number: number) {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
 }
 
 .sg-input__field {
-  width: 420px;
-  max-width: 60vw;
+  flex: 1;
+  min-width: 280px;
+  max-width: 560px;
 }
 
 .sg-input__select {

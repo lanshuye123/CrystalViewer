@@ -32,7 +32,13 @@ async function copyCoordinates(row: WyckoffPosition) {
   <el-card class="atom-table" shadow="never">
     <template #header>
       <div class="atom-table__header">
-        <span class="atom-table__title">Wyckoff 位置</span>
+        <div class="atom-table__heading">
+          <span class="atom-table__dot"></span>
+          <span class="atom-table__title">Wyckoff 位置</span>
+          <el-tag v-if="positions.length" size="small" effect="plain" round class="mono">
+            {{ positions.length }}
+          </el-tag>
+        </div>
         <span class="atom-table__hint">点击行可在 3D 视图中查看该位置</span>
       </div>
     </template>
@@ -92,19 +98,48 @@ async function copyCoordinates(row: WyckoffPosition) {
   padding: 8px;
 }
 
+.atom-table :deep(.el-card__header) {
+  padding: 10px 16px;
+}
+
 .atom-table__header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
+}
+
+.atom-table__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.atom-table__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .atom-table__title {
   font-weight: 600;
+  font-size: 14px;
 }
 
 .atom-table__hint {
   font-size: 12px;
-  color: #909399;
+  color: var(--text-secondary);
+}
+
+/* Rows behave like clickable list items */
+.atom-table :deep(.el-table__row) {
+  cursor: pointer;
+}
+
+.atom-table :deep(.el-table__row:hover > td) {
+  background: var(--accent-soft) !important;
 }
 
 .atom-table__expand {
@@ -128,7 +163,7 @@ async function copyCoordinates(row: WyckoffPosition) {
   user-select: text;
 }
 
-.atom-table :deep(.atom-table__row--active) {
+.atom-table :deep(.atom-table__row--active td.el-table__cell) {
   background: var(--el-color-primary-light-9);
 }
 </style>

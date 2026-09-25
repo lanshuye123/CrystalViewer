@@ -18,9 +18,9 @@ const latticeText = computed(() => {
   <el-card class="info-card" shadow="never">
     <template v-if="group">
       <div class="info-card__headline">
-        <span class="info-card__number">#{{ group.number }}</span>
+        <span class="info-card__number mono">#{{ group.number }}</span>
         <span class="info-card__symbol">{{ group.symbolHM }}</span>
-        <el-tag size="small" effect="plain">
+        <el-tag size="small" effect="light" round>
           {{ CRYSTAL_SYSTEM_LABELS[group.crystalSystem] }}晶系
         </el-tag>
       </div>
@@ -45,6 +45,10 @@ const latticeText = computed(() => {
 </template>
 
 <style scoped>
+.info-card :deep(.el-card__body) {
+  padding: 12px 14px;
+}
+
 .info-card__headline {
   display: flex;
   align-items: baseline;
@@ -53,13 +57,18 @@ const latticeText = computed(() => {
 }
 
 .info-card__number {
-  color: #909399;
+  color: var(--accent);
   font-size: 14px;
+  font-weight: 600;
 }
 
 .info-card__symbol {
   font-size: 22px;
   font-weight: 700;
   letter-spacing: 0.5px;
+}
+
+.info-card :deep(.el-descriptions__label) {
+  width: 88px;
 }
 </style>

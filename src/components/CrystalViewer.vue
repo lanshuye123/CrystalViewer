@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { Close, RefreshRight, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import { useCrystalStore } from '@/stores/crystal'
 import {
   CELL_EDGES,
@@ -11,6 +12,7 @@ import {
   type Vec3,
 } from '@/lib/lattice'
 import { elementStyle } from '@/lib/elements'
+import { computeBonds, type BondResult, type NeighborReplica } from '@/lib/bonds'
 import { type AtomSite, type LatticeParams, type SymmetryOperation } from '@/types/crystal'
 
 const store = useCrystalStore()
@@ -93,36 +95,42 @@ function atomRadius(element: string): number {
   }
 }
 
-function buildAtoms(atoms: AtomSite[]): THREE.Group {
+function buildAtoms(atoms: AtomSite[], replicas: NeighborReplica[]): THREE.Group {
   const group = new THREE.Group()
   atomInstanceMap = []
   atomsMesh = null
 
   const params = store.currentSpaceGroup!.latticeParams
-  const element = atoms[0]!.element
-  const style = elementStyle(element)
-
   const geometry = new THREE.SphereGeometry(1, 24, 16)
   const wireframe = store.displaySettings.modelType === 'wireframe'
-  const material = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(style.color),
-    roughness: 0.42,
-    metalness: 0.05,
-    wireframe,
-  })
-  const mesh = new THREE.InstancedMesh(geometry, material, atoms.length)
+  const material = new THREE.MeshStandardMaterial({ roughness: 0.42, metalness: 0.05, wireframe })
+  const mesh = new THREE.InstancedMesh(geometry, material, atoms.length + replicas.length)
   mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
 
   const matrix = new THREE.Matrix4()
-  const radius = atomRadius(element)
-  atoms.forEach((atom, index) => {
-    const position = toVector(fractionalToCartesian(atom.fractionalCoords, params))
+  const color = new THREE.Color()
+
+  const place = (atom: AtomSite, offset: Vec3, index: number) => {
+    const frac: Vec3 = [
+      atom.fractionalCoords[0] + offset[0],
+      atom.fractionalCoords[1] + offset[1],
+      atom.fractionalCoords[2] + offset[2],
+    ]
+    const position = toVector(fractionalToCartesian(frac, params))
+    const radius = atomRadius(atom.element)
     matrix.makeScale(radius, radius, radius)
     matrix.setPosition(position)
     mesh.setMatrixAt(index, matrix)
+    color.set(elementStyle(atom.element).color)
+    mesh.setColorAt(index, color)
     atomInstanceMap[index] = atom
-  })
+  }
+
+  atoms.forEach((atom, index) => place(atom, [0, 0, 0], index))
+  replicas.forEach((replica, index) => place(atoms[replica.atom]!, replica.offset, atoms.length + index))
+
   mesh.instanceMatrix.needsUpdate = true
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
   atomsMesh = mesh
   group.add(mesh)
 
@@ -130,11 +138,67 @@ function buildAtoms(atoms: AtomSite[]): THREE.Group {
     atoms.forEach((atom) => {
       const sprite = makeTextSprite(atom.label)
       sprite.position.copy(toVector(fractionalToCartesian(atom.fractionalCoords, params)))
-      sprite.position.y += radius + 0.35
+      sprite.position.y += atomRadius(atom.element) + 0.35
       sprite.scale.set(1.4, 0.7, 1)
       group.add(sprite)
     })
   }
+  return group
+}
+
+/** Render bonds as two half-cylinders, each tinted by the atom it touches. */
+function buildBonds(atoms: AtomSite[], result: BondResult): THREE.Group {
+  const group = new THREE.Group()
+  const bonds = result.bonds
+  if (!bonds.length) return group
+
+  const params = store.currentSpaceGroup!.latticeParams
+  const geometry = new THREE.CylinderGeometry(1, 1, 1, 10)
+  const material = new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0.05 })
+  const mesh = new THREE.InstancedMesh(geometry, material, bonds.length * 2)
+  mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
+
+  const bondRadius = store.displaySettings.modelType === 'wireframe' ? 0.05 : 0.1
+  const matrix = new THREE.Matrix4()
+  const scale = new THREE.Vector3()
+  const color = new THREE.Color()
+  const white = new THREE.Color('#ffffff')
+  const up = new THREE.Vector3(0, 1, 0)
+  const dir = new THREE.Vector3()
+  const quat = new THREE.Quaternion()
+
+  let instance = 0
+  for (const bond of bonds) {
+    const a = toVector(fractionalToCartesian(atoms[bond.i]!.fractionalCoords, params))
+    const jFrac = atoms[bond.j]!.fractionalCoords
+    const b = toVector(
+      fractionalToCartesian(
+        [jFrac[0]! + bond.offset[0], jFrac[1]! + bond.offset[1], jFrac[2]! + bond.offset[2]],
+        params,
+      ),
+    )
+    dir.subVectors(b, a)
+    const length = dir.length()
+    if (length < 1e-6) continue
+    quat.setFromUnitVectors(up, dir.clone().normalize())
+    const half = length / 2
+
+    const placeHalf = (center: THREE.Vector3, element: string) => {
+      scale.set(bondRadius, half, bondRadius)
+      matrix.compose(center, quat, scale)
+      mesh.setMatrixAt(instance, matrix)
+      color.set(elementStyle(element).color).lerp(white, 0.15)
+      mesh.setColorAt(instance, color)
+      instance++
+    }
+    placeHalf(a.clone().addScaledVector(dir, 0.25), atoms[bond.i]!.element)
+    placeHalf(a.clone().addScaledVector(dir, 0.75), atoms[bond.j]!.element)
+  }
+
+  mesh.count = instance
+  mesh.instanceMatrix.needsUpdate = true
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+  group.add(mesh)
   return group
 }
 
@@ -253,7 +317,14 @@ function rebuild() {
   const group = store.currentSpaceGroup
   if (!group) return
   if (store.displaySettings.showCell) content.add(buildCell(group.latticeParams))
-  if (store.currentAtoms.length) content.add(buildAtoms(store.currentAtoms))
+  if (store.currentAtoms.length) {
+    const bondResult =
+      store.displaySettings.showBonds && store.displaySettings.modelType !== 'space-filling'
+        ? computeBonds(store.currentAtoms, group.latticeParams)
+        : null
+    content.add(buildAtoms(store.currentAtoms, bondResult?.replicas ?? []))
+    if (bondResult) content.add(buildBonds(store.currentAtoms, bondResult))
+  }
   if (store.displaySettings.showSymmetryElements) {
     content.add(buildSymmetryElements(group.symmetryOperations))
   }
@@ -392,31 +463,47 @@ watch(
     <div ref="container" class="viewer__canvas-host"></div>
 
     <div class="viewer__toolbar">
-      <el-switch
-        v-model="autoRotate"
-        size="small"
-        active-text="自动旋转"
-        inline-prompt
-        style="--el-switch-on-color: #409eff"
-      />
-      <el-button size="small" :disabled="!store.currentSpaceGroup" @click="resetView">
-        重置视角
-      </el-button>
+      <el-tooltip content="自动旋转" placement="top">
+        <el-button
+          size="small"
+          circle
+          :type="autoRotate ? 'primary' : 'default'"
+          :icon="autoRotate ? VideoPause : VideoPlay"
+          @click="autoRotate = !autoRotate"
+        />
+      </el-tooltip>
+      <el-tooltip content="重置视角" placement="top">
+        <el-button
+          size="small"
+          circle
+          :disabled="!store.currentSpaceGroup"
+          :icon="RefreshRight"
+          @click="resetView"
+        />
+      </el-tooltip>
     </div>
 
-    <el-card v-if="picked" class="viewer__picked" shadow="always">
+    <el-card v-if="picked" class="viewer__picked glass-panel" shadow="never">
       <div class="viewer__picked-head">
-        <strong>{{ picked.label }}</strong>
-        <el-button size="small" text @click="picked = null">关闭</el-button>
+        <span class="viewer__picked-label mono">{{ picked.label }}</span>
+        <el-button size="small" text :icon="Close" @click="picked = null" />
       </div>
-      <div class="viewer__picked-row">元素：{{ picked.element }}</div>
       <div class="viewer__picked-row">
-        Wyckoff：{{ picked.multiplicity }}{{ picked.wyckoffLetter }}（{{ picked.siteSymmetry }}）
+        <span class="viewer__picked-key">元素</span>{{ picked.element }}
+      </div>
+      <div class="viewer__picked-row">
+        <span class="viewer__picked-key">Wyckoff</span>{{ picked.multiplicity }}{{
+          picked.wyckoffLetter
+        }}（{{ picked.siteSymmetry }}）
       </div>
       <div class="viewer__picked-row mono">
-        分数坐标：({{ picked.fractionalCoords.map((v) => v.toFixed(3)).join(', ') }})
+        <span class="viewer__picked-key">分数坐标</span>({{
+          picked.fractionalCoords.map((v) => v.toFixed(3)).join(', ')
+        }})
       </div>
     </el-card>
+
+    <div v-if="store.currentSpaceGroup" class="viewer__hint">拖拽旋转 · 滚轮缩放 · 点击原子查看详情</div>
 
     <div v-if="!store.currentSpaceGroup" class="viewer__empty">
       <el-empty description="输入空间群后在此查看晶胞" :image-size="80" />
@@ -440,39 +527,75 @@ watch(
 
 .viewer__toolbar {
   position: absolute;
-  top: 12px;
+  bottom: 12px;
   right: 12px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  border-radius: 8px;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 999px;
   background: rgba(31, 41, 55, 0.72);
-  backdrop-filter: blur(6px);
-}
-
-.viewer__toolbar :deep(.el-switch__label) {
-  color: #e5e7eb;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.3);
+  z-index: 2;
 }
 
 .viewer__picked {
   position: absolute;
   left: 12px;
   bottom: 12px;
-  width: 240px;
+  width: 250px;
+  z-index: 2;
+}
+
+.viewer__picked :deep(.el-card__body) {
+  padding: 10px 14px;
 }
 
 .viewer__picked-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+.viewer__picked-label {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
 }
 
 .viewer__picked-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-size: 12px;
-  color: #4b5563;
-  line-height: 1.7;
+  color: #374151;
+  line-height: 1.8;
+}
+
+.viewer__picked-key {
+  flex: none;
+  width: 52px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.viewer__hint {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: rgba(229, 231, 235, 0.75);
+  background: rgba(31, 41, 55, 0.55);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 1;
+  white-space: nowrap;
 }
 
 .viewer__empty {
