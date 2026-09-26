@@ -11,7 +11,14 @@ export function loadDisplaySettings(): DisplaySettings {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...DEFAULT_DISPLAY_SETTINGS }
     const parsed = JSON.parse(raw) as Partial<DisplaySettings>
-    return { ...DEFAULT_DISPLAY_SETTINGS, ...parsed }
+    return {
+      ...DEFAULT_DISPLAY_SETTINGS,
+      ...parsed,
+      // Nested records need a deep merge so payloads persisted before these
+      // keys existed keep working.
+      symmetryColors: { ...DEFAULT_DISPLAY_SETTINGS.symmetryColors, ...parsed.symmetryColors },
+      hiddenSymmetryElements: parsed.hiddenSymmetryElements ?? [],
+    }
   } catch {
     return { ...DEFAULT_DISPLAY_SETTINGS }
   }

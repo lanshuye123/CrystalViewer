@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Close, RefreshRight, VideoPause, VideoPlay } from '@element-plus/icons-vue'
@@ -13,7 +13,8 @@ import {
 } from '@/lib/lattice'
 import { elementStyle } from '@/lib/elements'
 import { computeBonds, type BondResult, type NeighborReplica } from '@/lib/bonds'
-import { type AtomSite, type LatticeParams, type SymmetryOperation } from '@/types/crystal'
+import { computeSymmetryElements, type SymmetryElement } from '@/lib/symmetry-elements'
+import { type AtomSite, type LatticeParams, type SymmetryElementKind } from '@/types/crystal'
 
 const store = useCrystalStore()
 const container = ref<HTMLDivElement | null>(null)
@@ -32,10 +33,32 @@ let lastFitRadius = 10
 
 const autoRotate = ref(false)
 const picked = ref<AtomSite | null>(null)
+const symmetryCounts = ref<Partial<Record<SymmetryElementKind, number>>>({})
+let fitSignature = ''
+
+const symmetryLegend = computed(() =>
+  SYMMETRY_KIND_ORDER.filter((kind) => (symmetryCounts.value[kind] ?? 0) > 0).map((kind) => ({
+    kind,
+    label: KIND_LABELS[kind],
+    count: symmetryCounts.value[kind] ?? 0,
+    color: store.displaySettings.symmetryColors[kind],
+    hidden: store.displaySettings.hiddenSymmetryElements.includes(kind),
+  })),
+)
 
 const DARK_BACKGROUND = new THREE.Color('#111827')
 const LIGHT_BACKGROUND = new THREE.Color('#eef2f7')
 const AXIS_COLORS = [0xef4444, 0x22c55e, 0x3b82f6]
+const PRESET_COLORS = [
+  '#22c55e',
+  '#06b6d4',
+  '#f59e0b',
+  '#f97316',
+  '#a855f7',
+  '#ef4444',
+  '#3b82f6',
+  '#eab308',
+]
 
 function toVector(coords: Vec3): THREE.Vector3 {
   return new THREE.Vector3(coords[0], coords[1], coords[2])
@@ -226,88 +249,240 @@ function buildBonds(atoms: AtomSite[], result: BondResult): THREE.Group {
   return group
 }
 
-function nullSpaceVector(matrix: number[][]): THREE.Vector3 | null {
-  const rows = matrix.map((row) => new THREE.Vector3(row[0]!, row[1]!, row[2]!))
-  const candidates = [
-    new THREE.Vector3().crossVectors(rows[0]!, rows[1]!),
-    new THREE.Vector3().crossVectors(rows[0]!, rows[2]!),
-    new THREE.Vector3().crossVectors(rows[1]!, rows[2]!),
-  ]
-  let best = candidates[0]!
-  for (const candidate of candidates) {
-    if (candidate.length() > best.length()) best = candidate
+const SUBSCRIPT_DIGITS = ['₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉']
+const SYMMETRY_KIND_ORDER: SymmetryElementKind[] = [
+  'mirror',
+  'glide',
+  'rotation',
+  'screw',
+  'rotoinversion',
+]
+const KIND_LABELS = {
+  rotation: '旋转轴',
+  screw: '螺旋轴',
+  mirror: '镜面',
+  glide: '滑移面',
+  rotoinversion: '旋转反演轴',
+} satisfies Record<SymmetryElementKind, string>
+
+/** Hermann-Maguin style axis symbol, e.g. "4", "2₁" or "3̄". */
+function axisLabel(element: SymmetryElement): string {
+  if (element.kind === 'rotoinversion') return `${element.fold}\u0304`
+  if (element.kind === 'screw' && element.screw) {
+    const subscript = String(element.screw)
+      .split('')
+      .map((digit) => SUBSCRIPT_DIGITS[Number(digit)] ?? digit)
+      .join('')
+    return `${element.fold}${subscript}`
   }
-  if (best.length() < 1e-6) return null
-  return best.normalize()
+  return String(element.fold)
 }
 
-function subtractIdentity(rotation: number[][], sign: number): number[][] {
-  return rotation.map((row, i) => row.map((value, j) => value + (i === j ? sign : 0)))
+/** Two unit vectors spanning the plane perpendicular to the direction. */
+function orthonormalBasis(direction: THREE.Vector3): [THREE.Vector3, THREE.Vector3] {
+  const helper = Math.abs(direction.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0)
+  const u = new THREE.Vector3().crossVectors(helper, direction).normalize()
+  const v = new THREE.Vector3().crossVectors(direction, u).normalize()
+  return [u, v]
 }
 
-function buildSymmetryElements(operations: SymmetryOperation[]): THREE.Group {
+/** Build a translucent mirror/glide plane with a border and a glide arrow. */
+function buildSymmetryPlane(
+  element: SymmetryElement,
+  color: THREE.Color,
+  foot: THREE.Vector3,
+  normal: THREE.Vector3,
+  extent: number,
+): THREE.Group {
+  const params = store.currentSpaceGroup!.latticeParams
+  const plane = new THREE.Group()
+  const half = extent / 2
+
+  plane.add(
+    new THREE.Mesh(
+      new THREE.PlaneGeometry(extent, extent),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.13,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    ),
+  )
+
+  const borderGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-half, -half, 0),
+    new THREE.Vector3(half, -half, 0),
+    new THREE.Vector3(half, half, 0),
+    new THREE.Vector3(-half, half, 0),
+  ])
+  if (element.kind === 'glide') {
+    // Dashed border distinguishes glide planes from mirrors.
+    const border = new THREE.LineLoop(
+      borderGeometry,
+      new THREE.LineDashedMaterial({
+        color,
+        transparent: true,
+        opacity: 0.95,
+        dashSize: extent * 0.05,
+        gapSize: extent * 0.035,
+      }),
+    )
+    border.computeLineDistances()
+    plane.add(border)
+
+    if (element.glide) {
+      const glide = toVector(fractionalToCartesian(element.glide, params))
+      const [u, v] = orthonormalBasis(normal)
+      const local = new THREE.Vector3(glide.dot(u), glide.dot(v), 0)
+      const arrowLength = local.length()
+      if (arrowLength > extent * 0.04) {
+        const direction = local.clone().normalize()
+        const shaftLength = arrowLength * 0.6
+        plane.add(
+          new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints([
+              local.clone().multiplyScalar(-0.5),
+              local
+                .clone()
+                .multiplyScalar(-0.5)
+                .addScaledVector(direction, shaftLength),
+            ]),
+            new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }),
+          ),
+        )
+        const headLength = arrowLength - shaftLength
+        const head = new THREE.Mesh(
+          new THREE.ConeGeometry(headLength * 0.45, headLength, 10),
+          new THREE.MeshBasicMaterial({ color }),
+        )
+        head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+        head.position
+          .copy(local.clone().multiplyScalar(-0.5))
+          .addScaledVector(direction, shaftLength + headLength / 2)
+        plane.add(head)
+      }
+    }
+  } else {
+    plane.add(
+      new THREE.LineLoop(
+        borderGeometry,
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 }),
+      ),
+    )
+  }
+
+  plane.position.copy(foot)
+  plane.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal)
+  return plane
+}
+
+/** Helical line around the top end of a screw axis, hinting at its handedness. */
+function buildScrewHelix(
+  color: THREE.Color,
+  foot: THREE.Vector3,
+  direction: THREE.Vector3,
+  extent: number,
+  axisLength: number,
+): THREE.Line {
+  const [u, v] = orthonormalBasis(direction)
+  const radius = extent * 0.035
+  const helixLength = extent * 0.22
+  const turns = 1.25
+  const segments = 48
+  const top = foot.clone().addScaledVector(direction, axisLength / 2)
+  const points: THREE.Vector3[] = []
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments
+    const angle = t * turns * Math.PI * 2
+    points.push(
+      top
+        .clone()
+        .addScaledVector(u, Math.cos(angle) * radius)
+        .addScaledVector(v, Math.sin(angle) * radius)
+        .addScaledVector(direction, -t * helixLength),
+    )
+  }
+  return new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(points),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }),
+  )
+}
+
+/** Build a rotation/screw/rotoinversion axis with fold-order labels. */
+function buildSymmetryAxis(
+  element: SymmetryElement,
+  color: THREE.Color,
+  foot: THREE.Vector3,
+  direction: THREE.Vector3,
+  extent: number,
+): THREE.Group {
+  const group = new THREE.Group()
+  const axisLength = extent * 1.35
+  const label = axisLabel(element)
+  const hex = `#${color.getHexString()}`
+
+  if (element.kind === 'rotoinversion') {
+    // Dashed line marks rotoinversion axes (as in VESTA style).
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        foot.clone().addScaledVector(direction, -axisLength / 2),
+        foot.clone().addScaledVector(direction, axisLength / 2),
+      ]),
+      new THREE.LineDashedMaterial({
+        color,
+        transparent: true,
+        opacity: 0.9,
+        dashSize: extent * 0.06,
+        gapSize: extent * 0.04,
+      }),
+    )
+    line.computeLineDistances()
+    group.add(line)
+  } else {
+    const radius = extent * 0.008
+    const axis = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius, axisLength, 10),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 }),
+    )
+    axis.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+    axis.position.copy(foot)
+    group.add(axis)
+    if (element.kind === 'screw') {
+      group.add(buildScrewHelix(color, foot, direction, extent, axisLength))
+    }
+  }
+
+  for (const sign of [-1, 1]) {
+    const sprite = makeTextSprite(label, hex)
+    sprite.position.copy(
+      foot.clone().addScaledVector(direction, sign * (axisLength / 2 + extent * 0.05)),
+    )
+    sprite.scale.set(extent * 0.1, extent * 0.05, 1)
+    group.add(sprite)
+  }
+  return group
+}
+
+function buildSymmetryElements(elements: SymmetryElement[]): THREE.Group {
   const group = new THREE.Group()
   const params = store.currentSpaceGroup!.latticeParams
   const corners = cellCorners(params).map(toVector)
   const box = new THREE.Box3().setFromPoints(corners)
-  const center = box.getCenter(new THREE.Vector3())
   const size = box.getSize(new THREE.Vector3())
-  const length = Math.max(size.x, size.y, size.z) * 1.1
+  const extent = Math.max(size.x, size.y, size.z)
+  const hidden = store.displaySettings.hiddenSymmetryElements
 
-  const seen = new Set<string>()
-  for (const operation of operations) {
-    if (operation.type === 'identity' || operation.type === 'inversion') continue
-    const key = `${operation.type}:${operation.seitz}`
-    if (seen.has(key)) continue
-    seen.add(key)
-
-    const isPlane = operation.type === 'mirror' || operation.type === 'glide'
-    const matrix = subtractIdentity(operation.rotation, isPlane ? 1 : -1)
-    const direction = nullSpaceVector(matrix)
-    if (!direction) continue
-
-    if (isPlane) {
-      const color = operation.type === 'mirror' ? 0x22c55e : 0x06b6d4
-      const planeGroup = new THREE.Group()
-      const half = length / 2
-      planeGroup.add(
-        new THREE.Mesh(
-          new THREE.PlaneGeometry(length, length),
-          new THREE.MeshBasicMaterial({
-            color,
-            transparent: true,
-            opacity: 0.16,
-            side: THREE.DoubleSide,
-            depthWrite: false,
-          }),
-        ),
-      )
-      // Bright border outline makes the plane edge obvious.
-      const borderPoints = [
-        new THREE.Vector3(-half, -half, 0),
-        new THREE.Vector3(half, -half, 0),
-        new THREE.Vector3(half, half, 0),
-        new THREE.Vector3(-half, half, 0),
-      ]
-      planeGroup.add(
-        new THREE.LineLoop(
-          new THREE.BufferGeometry().setFromPoints(borderPoints),
-          new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 }),
-        ),
-      )
-      planeGroup.position.copy(center)
-      planeGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction)
-      group.add(planeGroup)
+  for (const element of elements) {
+    if (hidden.includes(element.kind)) continue
+    const color = new THREE.Color(store.displaySettings.symmetryColors[element.kind])
+    const foot = toVector(fractionalToCartesian(element.origin, params))
+    const direction = toVector(fractionalToCartesian(element.direction, params)).normalize()
+    if (element.kind === 'mirror' || element.kind === 'glide') {
+      group.add(buildSymmetryPlane(element, color, foot, direction, extent))
     } else {
-      const color = operation.type === 'screw' ? 0xf97316 : 0xf59e0b
-      const axisRadius = length * 0.012
-      const axis = new THREE.Mesh(
-        new THREE.CylinderGeometry(axisRadius, axisRadius, length * 2, 10),
-        new THREE.MeshBasicMaterial({ color }),
-      )
-      axis.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
-      axis.position.copy(center)
-      group.add(axis)
+      group.add(buildSymmetryAxis(element, color, foot, direction, extent))
     }
   }
   return group
@@ -373,10 +548,23 @@ function rebuild() {
 
   if (store.customAtomSettings.showWyckoffAtoms) renderAtomSet(store.currentAtoms)
   if (store.customAtomSettings.showCustomAtoms) renderAtomSet(store.customAtoms)
+  symmetryCounts.value = {}
   if (store.displaySettings.showSymmetryElements) {
-    content.add(buildSymmetryElements(group.symmetryOperations))
+    const elements = computeSymmetryElements(group.symmetryOperations)
+    const counts: Partial<Record<SymmetryElementKind, number>> = {}
+    for (const element of elements) {
+      counts[element.kind] = (counts[element.kind] ?? 0) + 1
+    }
+    symmetryCounts.value = counts
+    content.add(buildSymmetryElements(elements))
   }
-  fitView()
+  // Only refit the camera when the cell itself changes; tweaks like colors or
+  // atom radius should not yank the user's viewpoint around.
+  const signature = String(group.number)
+  if (signature !== fitSignature) {
+    fitSignature = signature
+    fitView()
+  }
 }
 
 function resize() {
@@ -561,11 +749,32 @@ watch(
       </div>
     </el-card>
 
-    <div v-if="store.displaySettings.showSymmetryElements" class="viewer__legend glass-panel">
-      <span class="viewer__legend-item"><i style="background: #22c55e"></i>镜面</span>
-      <span class="viewer__legend-item"><i style="background: #06b6d4"></i>滑移面</span>
-      <span class="viewer__legend-item"><i style="background: #f59e0b"></i>旋转轴</span>
-      <span class="viewer__legend-item"><i style="background: #f97316"></i>螺旋轴</span>
+    <div
+      v-if="store.displaySettings.showSymmetryElements && symmetryLegend.length"
+      class="viewer__legend glass-panel"
+    >
+      <div class="viewer__legend-title">对称元素</div>
+      <div
+        v-for="item in symmetryLegend"
+        :key="item.kind"
+        class="viewer__legend-item"
+        :class="{ 'is-hidden': item.hidden }"
+        @click="store.toggleSymmetryElement(item.kind)"
+      >
+        <el-color-picker
+          class="viewer__legend-color"
+          :model-value="item.color"
+          size="small"
+          :predefine="PRESET_COLORS"
+          @update:model-value="
+            (value: string | null) => value && store.setSymmetryElementColor(item.kind, value)
+          "
+          @click.stop
+        />
+        <span class="viewer__legend-label">{{ item.label }}</span>
+        <span class="viewer__legend-count">{{ item.count }}</span>
+      </div>
+      <div class="viewer__legend-tip">点击色块调色 · 点击行显隐</div>
     </div>
 
     <div v-if="store.currentSpaceGroup" class="viewer__hint">拖拽旋转 · 滚轮缩放 · 点击原子查看详情</div>
@@ -652,25 +861,70 @@ watch(
   top: 12px;
   left: 12px;
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 12px;
-  font-size: 12px;
-  color: #374151;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 6px;
   z-index: 2;
+}
+
+.viewer__legend-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #6b7280);
+  letter-spacing: 1px;
+  margin-bottom: 4px;
 }
 
 .viewer__legend-item {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
+  padding: 3px 6px 3px 2px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease, opacity 0.15s ease;
 }
 
-.viewer__legend-item i {
-  width: 14px;
-  height: 4px;
-  border-radius: 2px;
-  display: inline-block;
+.viewer__legend-item:hover {
+  background: rgba(79, 110, 247, 0.08);
+}
+
+.viewer__legend-item.is-hidden {
+  opacity: 0.42;
+}
+
+.viewer__legend-item.is-hidden .viewer__legend-label {
+  text-decoration: line-through;
+}
+
+.viewer__legend-color {
+  flex: none;
+}
+
+.viewer__legend-label {
+  flex: 1;
+  min-width: 56px;
+}
+
+.viewer__legend-count {
+  flex: none;
+  min-width: 18px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft, rgba(79, 110, 247, 0.12));
+  border-radius: 999px;
+  padding: 0 5px;
+  line-height: 16px;
+}
+
+.viewer__legend-tip {
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--text-secondary, #9ca3af);
 }
 
 .viewer__hint {

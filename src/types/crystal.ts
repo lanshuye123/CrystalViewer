@@ -25,6 +25,9 @@ export type OperationType =
   | 'inversion'
   | 'rotoinversion'
 
+/** Symmetry element kinds that can be rendered in the 3D view. */
+export type SymmetryElementKind = Exclude<OperationType, 'identity' | 'inversion'>
+
 export interface SymmetryOperation {
   /** Coordinate triple, e.g. "-x+1/2, -y, z+1/2". */
   seitz: string
@@ -92,6 +95,10 @@ export interface DisplaySettings {
   atomRadiusScale: number
   modelType: ModelType
   background: BackgroundTheme
+  /** User-adjustable color per symmetry element kind (hex string). */
+  symmetryColors: Record<SymmetryElementKind, string>
+  /** Symmetry element kinds currently hidden from the 3D view. */
+  hiddenSymmetryElements: SymmetryElementKind[]
 }
 
 export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
@@ -102,6 +109,14 @@ export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
   atomRadiusScale: 0.5,
   modelType: 'ball-stick',
   background: 'dark',
+  symmetryColors: {
+    mirror: '#22c55e',
+    glide: '#06b6d4',
+    rotation: '#f59e0b',
+    screw: '#f97316',
+    rotoinversion: '#a855f7',
+  },
+  hiddenSymmetryElements: [],
 }
 
 export const CRYSTAL_SYSTEM_LABELS: Record<CrystalSystem, string> = {

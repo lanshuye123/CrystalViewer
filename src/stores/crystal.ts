@@ -5,6 +5,7 @@ import {
   type DisplaySettings,
   type SpaceGroupData,
   type SpaceGroupIndexEntry,
+  type SymmetryElementKind,
 } from '@/types/crystal'
 import { generateAtoms } from '@/lib/symmetry'
 import {
@@ -60,6 +61,23 @@ export const useCrystalStore = defineStore('crystal', () => {
   function setDisplaySettings(partial: Partial<DisplaySettings>) {
     displaySettings.value = { ...displaySettings.value, ...partial }
     saveDisplaySettings(displaySettings.value)
+  }
+
+  /** Change the render color of one symmetry element kind. */
+  function setSymmetryElementColor(kind: SymmetryElementKind, color: string) {
+    setDisplaySettings({
+      symmetryColors: { ...displaySettings.value.symmetryColors, [kind]: color },
+    })
+  }
+
+  /** Show/hide one symmetry element kind in the 3D view. */
+  function toggleSymmetryElement(kind: SymmetryElementKind) {
+    const hidden = displaySettings.value.hiddenSymmetryElements
+    setDisplaySettings({
+      hiddenSymmetryElements: hidden.includes(kind)
+        ? hidden.filter((item) => item !== kind)
+        : [...hidden, kind],
+    })
   }
 
   function persistCustomAtoms() {
@@ -207,6 +225,8 @@ export const useCrystalStore = defineStore('crystal', () => {
     customAtomCount,
     currentEntry,
     setDisplaySettings,
+    setSymmetryElementColor,
+    toggleSymmetryElement,
     setCustomAtomSettings,
     addCustomAtom,
     updateCustomAtom,
