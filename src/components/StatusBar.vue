@@ -8,7 +8,10 @@ const store = useCrystalStore()
 const summary = computed(() => {
   const group = store.currentSpaceGroup
   if (!group) return '未选择空间群'
-  return `#${group.number} ${group.symbolHM} · ${CRYSTAL_SYSTEM_LABELS[group.crystalSystem]}晶系 · 原子 ${store.atomCount}`
+  const custom = store.customAtomCount
+    ? ` · 自定义原子 ${store.customAtomCount}`
+    : ''
+  return `#${group.number} ${group.symbolHM} · ${CRYSTAL_SYSTEM_LABELS[group.crystalSystem]}晶系 · 原子 ${store.atomCount}${custom}`
 })
 </script>
 

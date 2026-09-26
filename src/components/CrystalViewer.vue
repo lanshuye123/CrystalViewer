@@ -23,8 +23,8 @@ let scene: THREE.Scene | null = null
 let camera: THREE.PerspectiveCamera | null = null
 let controls: OrbitControls | null = null
 const content = new THREE.Group()
-let atomsMesh: THREE.InstancedMesh | null = null
-let atomInstanceMap: AtomSite[] = []
+let atomMeshes: THREE.InstancedMesh[] = []
+let atomInstanceMaps: AtomSite[][] = []
 let frameId = 0
 let resizeObserver: ResizeObserver | null = null
 let pointerStart: { x: number; y: number } | null = null
@@ -97,8 +97,7 @@ function atomRadius(element: string): number {
 
 function buildAtoms(atoms: AtomSite[], replicas: NeighborReplica[]): THREE.Group {
   const group = new THREE.Group()
-  atomInstanceMap = []
-  atomsMesh = null
+  const instanceMap: AtomSite[] = []
 
   const params = store.currentSpaceGroup!.latticeParams
   const geometry = new THREE.SphereGeometry(1, 24, 16)
@@ -123,7 +122,7 @@ function buildAtoms(atoms: AtomSite[], replicas: NeighborReplica[]): THREE.Group
     mesh.setMatrixAt(index, matrix)
     color.set(elementStyle(atom.element).color)
     mesh.setColorAt(index, color)
-    atomInstanceMap[index] = atom
+    instanceMap[index] = atom
   }
 
   atoms.forEach((atom, index) => place(atom, [0, 0, 0], index))
@@ -131,7 +130,8 @@ function buildAtoms(atoms: AtomSite[], replicas: NeighborReplica[]): THREE.Group
 
   mesh.instanceMatrix.needsUpdate = true
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-  atomsMesh = mesh
+  atomMeshes.push(mesh)
+  atomInstanceMaps.push(instanceMap)
   group.add(mesh)
 
   if (store.displaySettings.showLabels) {
@@ -279,8 +279,8 @@ function disposeObject(object: THREE.Object3D) {
 }
 
 function clearContent() {
-  atomInstanceMap = []
-  atomsMesh = null
+  atomMeshes = []
+  atomInstanceMaps = []
   while (content.children.length) {
     const child = content.children.pop()!
     disposeObject(child)
@@ -317,14 +317,17 @@ function rebuild() {
   const group = store.currentSpaceGroup
   if (!group) return
   if (store.displaySettings.showCell) content.add(buildCell(group.latticeParams))
-  if (store.currentAtoms.length) {
-    const bondResult =
-      store.displaySettings.showBonds && store.displaySettings.modelType !== 'space-filling'
-        ? computeBonds(store.currentAtoms, group.latticeParams)
-        : null
-    content.add(buildAtoms(store.currentAtoms, bondResult?.replicas ?? []))
-    if (bondResult) content.add(buildBonds(store.currentAtoms, bondResult))
+
+  const wantBonds = store.displaySettings.showBonds && store.displaySettings.modelType !== 'space-filling'
+  const renderAtomSet = (atoms: AtomSite[]) => {
+    if (!atoms.length) return
+    const bondResult = wantBonds ? computeBonds(atoms, group.latticeParams) : null
+    content.add(buildAtoms(atoms, bondResult?.replicas ?? []))
+    if (bondResult) content.add(buildBonds(atoms, bondResult))
   }
+
+  if (store.customAtomSettings.showWyckoffAtoms) renderAtomSet(store.currentAtoms)
+  if (store.customAtomSettings.showCustomAtoms) renderAtomSet(store.customAtoms)
   if (store.displaySettings.showSymmetryElements) {
     content.add(buildSymmetryElements(group.symmetryOperations))
   }
@@ -350,7 +353,7 @@ function onPointerUp(event: PointerEvent) {
   if (!pointerStart) return
   const moved = Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y)
   pointerStart = null
-  if (moved > 5 || !atomsMesh || !camera || !renderer) return
+  if (moved > 5 || !atomMeshes.length || !camera || !renderer) return
 
   const rect = renderer.domElement.getBoundingClientRect()
   const pointer = new THREE.Vector2(
@@ -359,10 +362,11 @@ function onPointerUp(event: PointerEvent) {
   )
   const raycaster = new THREE.Raycaster()
   raycaster.setFromCamera(pointer, camera)
-  const hits = raycaster.intersectObject(atomsMesh, false)
+  const hits = raycaster.intersectObjects(atomMeshes, false)
   const hit = hits[0]
   if (hit && hit.instanceId !== undefined) {
-    picked.value = atomInstanceMap[hit.instanceId] ?? null
+    const meshIndex = atomMeshes.indexOf(hit.object as THREE.InstancedMesh)
+    picked.value = atomInstanceMaps[meshIndex]?.[hit.instanceId] ?? null
   } else {
     picked.value = null
   }
@@ -452,7 +456,13 @@ watch(autoRotate, (value) => {
 })
 
 watch(
-  () => [store.currentAtoms, store.currentSpaceGroup, store.displaySettings],
+  () => [
+    store.currentAtoms,
+    store.currentSpaceGroup,
+    store.displaySettings,
+    store.customAtoms,
+    store.customAtomSettings,
+  ],
   () => rebuild(),
   { deep: true },
 )
@@ -491,7 +501,10 @@ watch(
       <div class="viewer__picked-row">
         <span class="viewer__picked-key">元素</span>{{ picked.element }}
       </div>
-      <div class="viewer__picked-row">
+      <div v-if="picked.isCustom" class="viewer__picked-row">
+        <span class="viewer__picked-key">来源</span>自定义原子（{{ picked.multiplicity }} 个等效位置）
+      </div>
+      <div v-else class="viewer__picked-row">
         <span class="viewer__picked-key">Wyckoff</span>{{ picked.multiplicity }}{{
           picked.wyckoffLetter
         }}（{{ picked.siteSymmetry }}）

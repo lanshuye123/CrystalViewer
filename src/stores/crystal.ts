@@ -9,6 +9,15 @@ import {
 import { generateAtoms } from '@/lib/symmetry'
 import { loadSpaceGroup, matchSpaceGroup, SPACE_GROUP_INDEX } from '@/lib/spacegroup'
 import { loadDisplaySettings, saveDisplaySettings } from '@/lib/settings-storage'
+import {
+  expandCustomAtoms,
+  loadCustomAtomState,
+  saveCustomAtomState,
+  type CustomAtomInput,
+  type CustomAtomSettings,
+} from '@/lib/custom-atoms'
+
+let customAtomSeq = 0
 
 export const useCrystalStore = defineStore('crystal', () => {
   const index = ref<SpaceGroupIndexEntry[]>(SPACE_GROUP_INDEX)
@@ -16,19 +25,81 @@ export const useCrystalStore = defineStore('crystal', () => {
   const currentAtoms = ref<AtomSite[]>([])
   const selectedWyckoffLetter = ref<string | null>(null)
   const displaySettings = ref<DisplaySettings>(loadDisplaySettings())
+  const persistedCustom = loadCustomAtomState()
+  const customAtomInputs = ref<CustomAtomInput[]>(persistedCustom.inputs)
+  const customAtomSettings = ref<CustomAtomSettings>(persistedCustom.settings)
   const fps = ref(0)
   const loading = ref(false)
   const error = ref<string | null>(null)
 
   const atomCount = computed(() => currentAtoms.value.length)
+  const customAtomCount = computed(() => customAtoms.value.length)
   const currentEntry = computed<SpaceGroupIndexEntry | null>(() => {
     if (!currentSpaceGroup.value) return null
     return index.value.find((entry) => entry.number === currentSpaceGroup.value!.number) ?? null
   })
 
+  /** Custom atoms expanded by the current space group's symmetry operations. */
+  const customAtoms = computed<AtomSite[]>(() =>
+    expandCustomAtoms(
+      currentSpaceGroup.value,
+      customAtomInputs.value,
+      customAtomSettings.value.customApplySymmetry,
+    ),
+  )
+
   function setDisplaySettings(partial: Partial<DisplaySettings>) {
     displaySettings.value = { ...displaySettings.value, ...partial }
     saveDisplaySettings(displaySettings.value)
+  }
+
+  function persistCustomAtoms() {
+    saveCustomAtomState({
+      inputs: customAtomInputs.value,
+      settings: customAtomSettings.value,
+    })
+  }
+
+  /** Normalize an element symbol, e.g. "si" / "SI" -> "Si". */
+  function normalizeElement(element: string): string {
+    const trimmed = element.trim()
+    if (!trimmed) return 'X'
+    return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()
+  }
+
+  function addCustomAtom(element: string, coords: [number, number, number]) {
+    customAtomSeq += 1
+    customAtomInputs.value = [
+      ...customAtomInputs.value,
+      {
+        id: `ca-${Date.now().toString(36)}-${customAtomSeq}`,
+        element: normalizeElement(element),
+        coords,
+      },
+    ]
+    persistCustomAtoms()
+  }
+
+  function updateCustomAtom(id: string, coords: [number, number, number]) {
+    customAtomInputs.value = customAtomInputs.value.map((input) =>
+      input.id === id ? { ...input, coords } : input,
+    )
+    persistCustomAtoms()
+  }
+
+  function removeCustomAtom(id: string) {
+    customAtomInputs.value = customAtomInputs.value.filter((input) => input.id !== id)
+    persistCustomAtoms()
+  }
+
+  function clearCustomAtoms() {
+    customAtomInputs.value = []
+    persistCustomAtoms()
+  }
+
+  function setCustomAtomSettings(partial: Partial<CustomAtomSettings>) {
+    customAtomSettings.value = { ...customAtomSettings.value, ...partial }
+    persistCustomAtoms()
   }
 
   function selectWyckoff(letter: string) {
@@ -77,12 +148,21 @@ export const useCrystalStore = defineStore('crystal', () => {
     currentAtoms,
     selectedWyckoffLetter,
     displaySettings,
+    customAtomInputs,
+    customAtomSettings,
+    customAtoms,
     fps,
     loading,
     error,
     atomCount,
+    customAtomCount,
     currentEntry,
     setDisplaySettings,
+    setCustomAtomSettings,
+    addCustomAtom,
+    updateCustomAtom,
+    removeCustomAtom,
+    clearCustomAtoms,
     selectWyckoff,
     selectSpaceGroup,
     selectByNumber,

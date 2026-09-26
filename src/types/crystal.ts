@@ -75,6 +75,10 @@ export interface AtomSite {
   fractionalCoords: [number, number, number]
   occupancy: number
   uIso?: number
+  /** True for atoms created from user input (custom atom panel). */
+  isCustom?: boolean
+  /** Id of the originating custom-atom input, if any. */
+  sourceId?: string
 }
 
 export type ModelType = 'ball-stick' | 'space-filling' | 'wireframe'

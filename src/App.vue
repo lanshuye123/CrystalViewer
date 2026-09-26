@@ -6,11 +6,13 @@ import SpaceGroupInfoCard from '@/components/SpaceGroupInfoCard.vue'
 import CrystalViewer from '@/components/CrystalViewer.vue'
 import DisplaySettings from '@/components/DisplaySettings.vue'
 import AtomTable from '@/components/AtomTable.vue'
+import AtomInput from '@/components/AtomInput.vue'
 import StatusBar from '@/components/StatusBar.vue'
 import { useCrystalStore } from '@/stores/crystal'
 
 const store = useCrystalStore()
 const showSettings = ref(true)
+const sideTab = ref<'wyckoff' | 'custom'>('wyckoff')
 
 onMounted(() => {
   if (!store.currentSpaceGroup) {
@@ -51,9 +53,22 @@ onMounted(() => {
 
       <aside class="app__side">
         <SpaceGroupInfoCard class="app__side-info" />
-        <div class="app__side-table">
-          <AtomTable />
-        </div>
+        <el-tabs v-model="sideTab" class="app__side-tabs">
+          <el-tab-pane label="Wyckoff 位置" name="wyckoff" lazy>
+            <AtomTable />
+          </el-tab-pane>
+          <el-tab-pane name="custom">
+            <template #label>
+              自定义原子
+              <el-badge
+                v-if="store.customAtomInputs.length"
+                :value="store.customAtomInputs.length"
+                class="app__tab-badge"
+              />
+            </template>
+            <AtomInput />
+          </el-tab-pane>
+        </el-tabs>
       </aside>
     </main>
 
@@ -165,12 +180,35 @@ onMounted(() => {
   flex: none;
 }
 
-.app__side-table {
+.app__side-tabs {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius-lg);
-  overflow: hidden;
   box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.app__side-tabs :deep(.el-tabs__header) {
+  margin: 0;
+  padding: 0 12px;
+}
+
+.app__side-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+}
+
+.app__side-tabs :deep(.el-tab-pane) {
+  height: 100%;
+}
+
+.app__tab-badge {
+  margin-left: 6px;
+  transform: translateY(-1px);
 }
 
 @media (max-width: 900px) {
