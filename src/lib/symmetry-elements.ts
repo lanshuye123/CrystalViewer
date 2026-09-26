@@ -182,17 +182,18 @@ export function computeSymmetryElements(operations: SymmetryOperation[]): Symmet
     const foot = leastSquaresFoot(operation.rotation, operation.translation)
     if (!foot) continue
     const origin: Vec3 = [wrapFraction(foot[0]!), wrapFraction(foot[1]!), wrapFraction(foot[2]!)]
+    const translation: Vec3 = [operation.translation[0]!, operation.translation[1]!, operation.translation[2]!]
 
     let screw: number | undefined
     if (kind === 'screw') {
-      const axial = dot(operation.translation, direction) / dot(direction, direction)
+      const axial = dot(translation, direction) / dot(direction, direction)
       const subscript = ((Math.round(fold * axial) % fold) + fold) % fold
       if (subscript > 0) screw = subscript
     }
 
     let glide: Vec3 | undefined
     if (kind === 'glide') {
-      const axial = dot(operation.translation, direction) / dot(direction, direction)
+      const axial = dot(translation, direction) / dot(direction, direction)
       const inPlane: Vec3 = [
         operation.translation[0]! - axial * direction[0]!,
         operation.translation[1]! - axial * direction[1]!,
