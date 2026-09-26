@@ -57,10 +57,20 @@ src/data/spacegroups/<晶系>.json          # 按 7 大晶系拆分，动态 imp
 ## 部署
 
 推送到 `main` 分支会触发 GitHub Actions（`.github/workflows/deploy.yml`）自动构建并发布到
-GitHub Pages，自定义域名为 `crystal.jamaccao.cn`（域名已通过 `public/CNAME` 声明）。
+GitHub Pages，访问地址为 **https://crystal.jamaccao.cn/**。
 
-首次部署前，请在仓库 `Settings → Pages` 中将 Source 设为 **GitHub Actions**，并配置好
-`crystal.jamaccao.cn` 的 DNS 解析。
+自定义域名 `crystal.jamaccao.cn` 已在仓库 Pages 设置中配置（`public/CNAME` 会一并发布，便于
+分支式部署与迁移，但**仅靠 `CNAME` 文件不足以在 `build_type: workflow` 时绑定域名**）。首次
+在新仓库部署时需完成：
+
+1. `Settings → Pages → Source` 选择 **GitHub Actions**。
+2. `Settings → Pages → Custom domain` 填入 `crystal.jamaccao.cn`（或通过 API
+   `PUT /repos/{owner}/{repo}/pages` 设置 `cname`），然后勾选 **Enforce HTTPS**。
+3. DNS 提供商处添加 `CNAME` 记录：`crystal` → `<用户名>.github.io`。
+
+> 注意：若账号的 **用户站点**（`<用户名>.github.io`）已绑定自定义域名（如 `blog.jamaccao.cn`），
+> 未单独配置域名时项目站点会被自动重定向到该域名的子路径下；必须按上述第 2 步为本仓库单独绑定
+> `crystal.jamaccao.cn`。
 
 ## 项目结构
 
