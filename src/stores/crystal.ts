@@ -1,7 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
-  DEFAULT_DISPLAY_SETTINGS,
   type AtomSite,
   type DisplaySettings,
   type SpaceGroupData,
@@ -9,13 +8,14 @@ import {
 } from '@/types/crystal'
 import { generateAtoms } from '@/lib/symmetry'
 import { loadSpaceGroup, matchSpaceGroup, SPACE_GROUP_INDEX } from '@/lib/spacegroup'
+import { loadDisplaySettings, saveDisplaySettings } from '@/lib/settings-storage'
 
 export const useCrystalStore = defineStore('crystal', () => {
   const index = ref<SpaceGroupIndexEntry[]>(SPACE_GROUP_INDEX)
   const currentSpaceGroup = ref<SpaceGroupData | null>(null)
   const currentAtoms = ref<AtomSite[]>([])
   const selectedWyckoffLetter = ref<string | null>(null)
-  const displaySettings = ref<DisplaySettings>({ ...DEFAULT_DISPLAY_SETTINGS })
+  const displaySettings = ref<DisplaySettings>(loadDisplaySettings())
   const fps = ref(0)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -28,6 +28,7 @@ export const useCrystalStore = defineStore('crystal', () => {
 
   function setDisplaySettings(partial: Partial<DisplaySettings>) {
     displaySettings.value = { ...displaySettings.value, ...partial }
+    saveDisplaySettings(displaySettings.value)
   }
 
   function selectWyckoff(letter: string) {
