@@ -7,7 +7,12 @@ import {
   type SpaceGroupIndexEntry,
 } from '@/types/crystal'
 import { generateAtoms } from '@/lib/symmetry'
-import { loadSpaceGroup, matchSpaceGroup, SPACE_GROUP_INDEX } from '@/lib/spacegroup'
+import {
+  loadAllSpaceGroups,
+  loadSpaceGroup,
+  matchSpaceGroup,
+  SPACE_GROUP_INDEX,
+} from '@/lib/spacegroup'
 import { loadDisplaySettings, saveDisplaySettings } from '@/lib/settings-storage'
 import {
   expandCustomAtoms,
@@ -16,6 +21,7 @@ import {
   type CustomAtomInput,
   type CustomAtomSettings,
 } from '@/lib/custom-atoms'
+import { detectSpaceGroup, type DetectAtom } from '@/lib/structure-detect'
 
 let customAtomSeq = 0
 
@@ -31,6 +37,9 @@ export const useCrystalStore = defineStore('crystal', () => {
   const fps = ref(0)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  const detectedStructure = ref<SpaceGroupData | null>(null)
+  const detecting = ref(false)
+  const detectError = ref<string | null>(null)
 
   const atomCount = computed(() => currentAtoms.value.length)
   const customAtomCount = computed(() => customAtoms.value.length)
@@ -102,6 +111,43 @@ export const useCrystalStore = defineStore('crystal', () => {
     persistCustomAtoms()
   }
 
+  /** Identify the space group formed by the custom atoms in the current cell. */
+  async function detectStructure(): Promise<boolean> {
+    const params = currentSpaceGroup.value?.latticeParams
+    if (!params) {
+      detectError.value = '请先选择空间群以确定晶胞'
+      return false
+    }
+    if (!customAtomInputs.value.length) {
+      detectError.value = '请先添加自定义原子'
+      detectedStructure.value = null
+      return false
+    }
+    detecting.value = true
+    detectError.value = null
+    try {
+      const groups = await loadAllSpaceGroups()
+      const atoms: DetectAtom[] = customAtomInputs.value.map((input) => ({
+        element: input.element,
+        coords: [
+          ((input.coords[0] % 1) + 1) % 1,
+          ((input.coords[1] % 1) + 1) % 1,
+          ((input.coords[2] % 1) + 1) % 1,
+        ],
+      }))
+      detectedStructure.value = detectSpaceGroup(atoms, params, groups)
+      if (!detectedStructure.value) {
+        detectError.value = '未能识别结构，请检查原子坐标'
+      }
+      return Boolean(detectedStructure.value)
+    } catch (cause) {
+      detectError.value = cause instanceof Error ? cause.message : String(cause)
+      return false
+    } finally {
+      detecting.value = false
+    }
+  }
+
   function selectWyckoff(letter: string) {
     if (!currentSpaceGroup.value) return
     const position = currentSpaceGroup.value.wyckoffPositions.find((wp) => wp.letter === letter)
@@ -154,6 +200,9 @@ export const useCrystalStore = defineStore('crystal', () => {
     fps,
     loading,
     error,
+    detectedStructure,
+    detecting,
+    detectError,
     atomCount,
     customAtomCount,
     currentEntry,
@@ -163,6 +212,7 @@ export const useCrystalStore = defineStore('crystal', () => {
     updateCustomAtom,
     removeCustomAtom,
     clearCustomAtoms,
+    detectStructure,
     selectWyckoff,
     selectSpaceGroup,
     selectByNumber,

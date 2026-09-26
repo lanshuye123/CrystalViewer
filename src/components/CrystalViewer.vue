@@ -46,10 +46,15 @@ function makeTextSprite(text: string, color = '#e5e7eb'): THREE.Sprite {
   canvas.width = 128
   canvas.height = 64
   const context = canvas.getContext('2d')!
-  context.fillStyle = color
   context.font = 'bold 44px sans-serif'
   context.textAlign = 'center'
   context.textBaseline = 'middle'
+  // Dark outline keeps labels readable on both light and dark backgrounds.
+  context.lineWidth = 9
+  context.lineJoin = 'round'
+  context.strokeStyle = 'rgba(17, 24, 39, 0.85)'
+  context.strokeText(text, canvas.width / 2, canvas.height / 2)
+  context.fillStyle = color
   context.fillText(text, canvas.width / 2, canvas.height / 2)
   const texture = new THREE.CanvasTexture(canvas)
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false })
@@ -66,17 +71,36 @@ function buildCell(params: LatticeParams): THREE.Group {
     edgePoints.push(corners[start]!, corners[end]!)
   }
   const edgeGeometry = new THREE.BufferGeometry().setFromPoints(edgePoints)
-  const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.9 })
+  const edgeMaterial = new THREE.LineBasicMaterial({ color: 0xcbd5e1, transparent: true, opacity: 1 })
   group.add(new THREE.LineSegments(edgeGeometry, edgeMaterial))
 
-  const origin = corners[0]!
   const axes = cellAxes(params)
+  const maxAxisLength = Math.max(...axes.map((axis) => Math.hypot(axis[0], axis[1], axis[2])))
+  const shaftRadius = maxAxisLength * 0.016
+  const headRadius = shaftRadius * 2.2
+  const headLength = maxAxisLength * 0.07
   axes.forEach((axis, index) => {
-    const geometry = new THREE.BufferGeometry().setFromPoints([origin, toVector(axis)])
-    const material = new THREE.LineBasicMaterial({ color: AXIS_COLORS[index]!, linewidth: 2 })
-    group.add(new THREE.Line(geometry, material))
+    const direction = toVector(axis).normalize()
+    const length = toVector(axis).length()
+    const shaftLength = Math.max(length - headLength, length * 0.7)
+    const material = new THREE.MeshBasicMaterial({ color: AXIS_COLORS[index]! })
+
+    const shaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 12),
+      material,
+    )
+    shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+    shaft.position.copy(direction.clone().multiplyScalar(shaftLength / 2))
+    group.add(shaft)
+
+    const head = new THREE.Mesh(new THREE.ConeGeometry(headRadius, headLength, 16), material)
+    head.quaternion.copy(shaft.quaternion)
+    head.position.copy(direction.clone().multiplyScalar(shaftLength + headLength / 2))
+    group.add(head)
+
     const sprite = makeTextSprite(['a', 'b', 'c'][index]!, `#${AXIS_COLORS[index]!.toString(16).padStart(6, '0')}`)
-    sprite.position.copy(toVector(axis))
+    sprite.position.copy(direction.clone().multiplyScalar(length + headLength * 1.4))
+    sprite.scale.set(1.6, 0.8, 1)
     group.add(sprite)
   })
   return group
@@ -243,26 +267,47 @@ function buildSymmetryElements(operations: SymmetryOperation[]): THREE.Group {
     if (!direction) continue
 
     if (isPlane) {
-      const plane = new THREE.Mesh(
-        new THREE.PlaneGeometry(length, length),
-        new THREE.MeshBasicMaterial({
-          color: operation.type === 'mirror' ? 0x22c55e : 0x06b6d4,
-          transparent: true,
-          opacity: 0.12,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
+      const color = operation.type === 'mirror' ? 0x22c55e : 0x06b6d4
+      const planeGroup = new THREE.Group()
+      const half = length / 2
+      planeGroup.add(
+        new THREE.Mesh(
+          new THREE.PlaneGeometry(length, length),
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.16,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        ),
       )
-      plane.position.copy(center)
-      plane.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction)
-      group.add(plane)
+      // Bright border outline makes the plane edge obvious.
+      const borderPoints = [
+        new THREE.Vector3(-half, -half, 0),
+        new THREE.Vector3(half, -half, 0),
+        new THREE.Vector3(half, half, 0),
+        new THREE.Vector3(-half, half, 0),
+      ]
+      planeGroup.add(
+        new THREE.LineLoop(
+          new THREE.BufferGeometry().setFromPoints(borderPoints),
+          new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 }),
+        ),
+      )
+      planeGroup.position.copy(center)
+      planeGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction)
+      group.add(planeGroup)
     } else {
       const color = operation.type === 'screw' ? 0xf97316 : 0xf59e0b
-      const geometry = new THREE.BufferGeometry().setFromPoints([
-        center.clone().addScaledVector(direction, -length),
-        center.clone().addScaledVector(direction, length),
-      ])
-      group.add(new THREE.Line(geometry, new THREE.LineDashedMaterial({ color })))
+      const axisRadius = length * 0.012
+      const axis = new THREE.Mesh(
+        new THREE.CylinderGeometry(axisRadius, axisRadius, length * 2, 10),
+        new THREE.MeshBasicMaterial({ color }),
+      )
+      axis.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+      axis.position.copy(center)
+      group.add(axis)
     }
   }
   return group
@@ -516,6 +561,13 @@ watch(
       </div>
     </el-card>
 
+    <div v-if="store.displaySettings.showSymmetryElements" class="viewer__legend glass-panel">
+      <span class="viewer__legend-item"><i style="background: #22c55e"></i>镜面</span>
+      <span class="viewer__legend-item"><i style="background: #06b6d4"></i>滑移面</span>
+      <span class="viewer__legend-item"><i style="background: #f59e0b"></i>旋转轴</span>
+      <span class="viewer__legend-item"><i style="background: #f97316"></i>螺旋轴</span>
+    </div>
+
     <div v-if="store.currentSpaceGroup" class="viewer__hint">拖拽旋转 · 滚轮缩放 · 点击原子查看详情</div>
 
     <div v-if="!store.currentSpaceGroup" class="viewer__empty">
@@ -593,6 +645,32 @@ watch(
   width: 52px;
   color: var(--text-secondary);
   font-size: 11px;
+}
+
+.viewer__legend {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #374151;
+  z-index: 2;
+}
+
+.viewer__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.viewer__legend-item i {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+  display: inline-block;
 }
 
 .viewer__hint {

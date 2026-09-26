@@ -19,6 +19,15 @@ const LOADERS: Record<CrystalSystem, () => Promise<SpaceGroupData[]>> = {
 }
 
 const cache = new Map<number, SpaceGroupData>()
+let allGroupsCache: SpaceGroupData[] | null = null
+
+/** Load the full data of all 230 space groups (cached after first call). */
+export async function loadAllSpaceGroups(): Promise<SpaceGroupData[]> {
+  if (allGroupsCache) return allGroupsCache
+  const systems = await Promise.all(Object.values(LOADERS).map((load) => load()))
+  allGroupsCache = systems.flat()
+  return allGroupsCache
+}
 
 /** Normalise an H-M symbol or number for comparison (ignore case and spaces). */
 export function normalizeSymbol(value: string): string {

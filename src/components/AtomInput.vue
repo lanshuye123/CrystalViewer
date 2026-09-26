@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue'
-import { Delete } from '@element-plus/icons-vue'
+import { Delete, MagicStick } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useCrystalStore } from '@/stores/crystal'
 import { ELEMENT_STYLES, elementStyle } from '@/lib/elements'
+import { CRYSTAL_SYSTEM_LABELS } from '@/types/crystal'
 
 const store = useCrystalStore()
 
@@ -15,6 +16,15 @@ function elementColor(element: string): string {
 
 /** Elements with a known style; unknown symbols still work via the fallback. */
 const elementOptions = Object.keys(ELEMENT_STYLES).filter((element) => element !== 'X')
+
+/** Free-text element input with symbol suggestions. */
+function queryElements(queryString: string, cb: (results: { value: string }[]) => void) {
+  const query = queryString.trim().toLowerCase()
+  const results = elementOptions
+    .filter((element) => !query || element.toLowerCase().startsWith(query))
+    .map((element) => ({ value: element }))
+  cb(results)
+}
 
 /** Number of symmetry-equivalent sites generated per input row. */
 const siteCounts = computed(() => {
@@ -30,21 +40,24 @@ function addAtom() {
   store.addCustomAtom(form.element, [form.x, form.y, form.z])
   ElMessage.success(`已添加 ${store.customAtomInputs.at(-1)!.element} 原子`)
 }
+
+async function loadDetected() {
+  if (!store.detectedStructure) return
+  const ok = await store.selectByNumber(store.detectedStructure.number)
+  if (ok) ElMessage.success(`已载入 #${store.detectedStructure.number} ${store.detectedStructure.symbolHM}`)
+}
 </script>
 
 <template>
   <div class="atom-input">
     <div class="atom-input__form">
-      <el-select
+      <el-autocomplete
         v-model="form.element"
         class="atom-input__element"
-        filterable
-        allow-create
-        default-first-option
-        placeholder="元素"
-      >
-        <el-option v-for="element in elementOptions" :key="element" :label="element" :value="element" />
-      </el-select>
+        :fetch-suggestions="queryElements"
+        placeholder="元素符号"
+        clearable
+      />
       <label class="atom-input__coord">
         x
         <el-input-number v-model="form.x" :min="0" :max="1" :step="0.05" :precision="4" size="small" controls-position="right" />
@@ -85,6 +98,33 @@ function addAtom() {
         />
         显示 Wyckoff 原子
       </span>
+    </div>
+
+    <div class="atom-input__detect">
+      <el-button
+        size="small"
+        type="primary"
+        plain
+        :icon="MagicStick"
+        :loading="store.detecting"
+        :disabled="!store.customAtomInputs.length"
+        @click="store.detectStructure()"
+      >
+        识别晶体结构
+      </el-button>
+      <div v-if="store.detectedStructure" class="atom-input__result">
+        <div class="atom-input__result-text">
+          识别为
+          <strong class="mono">{{ store.detectedStructure.symbolHM }}</strong>
+          <span class="mono atom-input__result-number">#{{ store.detectedStructure.number }}</span>
+          <el-tag size="small" effect="plain" round>
+            {{ CRYSTAL_SYSTEM_LABELS[store.detectedStructure.crystalSystem] }}晶系 · {{ store.detectedStructure.latticeType }}格子
+          </el-tag>
+        </div>
+        <el-button size="small" type="primary" link @click="loadDetected">载入该空间群</el-button>
+      </div>
+      <span v-else-if="store.detectError" class="atom-input__error">{{ store.detectError }}</span>
+      <span v-else class="atom-input__muted">根据自定义原子识别所属空间群</span>
     </div>
 
     <el-table :data="store.customAtomInputs" size="small" height="100%" empty-text="尚未添加原子">
@@ -154,7 +194,47 @@ function addAtom() {
 }
 
 .atom-input__element {
-  width: 92px;
+  width: 120px;
+}
+
+.atom-input__detect {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 8px;
+  background: rgba(79, 110, 247, 0.04);
+}
+
+.atom-input__result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.atom-input__result-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.atom-input__result strong {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.atom-input__result-number {
+  color: var(--text-secondary);
+}
+
+.atom-input__error {
+  font-size: 12px;
+  color: var(--el-color-danger);
 }
 
 .atom-input__coord {
