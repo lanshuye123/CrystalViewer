@@ -84,7 +84,7 @@ export interface AtomSite {
   sourceId?: string
 }
 
-export type ModelType = 'ball-stick' | 'space-filling' | 'wireframe'
+export type ModelType = 'ball-stick' | 'atoms-only' | 'space-filling' | 'wireframe'
 export type BackgroundTheme = 'dark' | 'light'
 
 export interface DisplaySettings {

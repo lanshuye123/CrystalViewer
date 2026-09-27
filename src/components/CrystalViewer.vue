@@ -1005,7 +1005,11 @@ function rebuild() {
   if (!group) return
   if (store.displaySettings.showCell) content.add(buildCell(group.latticeParams))
 
-  const wantBonds = store.displaySettings.showBonds && store.displaySettings.modelType !== 'space-filling'
+  // "仅原子" shows isolated atoms; bonds are also off in space-filling.
+  const wantBonds =
+    store.displaySettings.showBonds &&
+    store.displaySettings.modelType !== 'space-filling' &&
+    store.displaySettings.modelType !== 'atoms-only'
   const renderAtomSet = (atoms: AtomSite[]) => {
     if (!atoms.length) return
     const bondResult = wantBonds ? computeBonds(atoms, group.latticeParams) : null

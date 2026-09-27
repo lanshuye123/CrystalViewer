@@ -38,8 +38,11 @@ async function copyCoordinates(row: WyckoffPosition) {
           <el-tag v-if="positions.length" size="small" effect="plain" round class="mono">
             {{ positions.length }}
           </el-tag>
+          <el-tag v-if="store.atomCount" size="small" effect="light" round class="atom-table__count">
+            显示 {{ store.atomCount }} 个原子
+          </el-tag>
         </div>
-        <span class="atom-table__hint">点击行可在 3D 视图中查看该位置</span>
+        <span class="atom-table__hint">点击行切换显示位置 · 多重度越低原子越少</span>
       </div>
     </template>
 
@@ -48,6 +51,7 @@ async function copyCoordinates(row: WyckoffPosition) {
       size="small"
       height="100%"
       :row-class-name="rowClassName"
+      :default-sort="{ prop: 'multiplicity', order: 'ascending' }"
       @row-click="selectRow"
     >
       <el-table-column type="expand">
@@ -126,6 +130,12 @@ async function copyCoordinates(row: WyckoffPosition) {
 .atom-table__title {
   font-weight: 600;
   font-size: 14px;
+}
+
+.atom-table__count {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
 }
 
 .atom-table__hint {

@@ -194,9 +194,15 @@ export const useCrystalStore = defineStore('crystal', () => {
     try {
       const data = await loadSpaceGroup(entry)
       currentSpaceGroup.value = data
-      const general = data.wyckoffPositions[0]
-      selectedWyckoffLetter.value = general?.letter ?? null
-      currentAtoms.value = general ? generateAtoms(data, general.letter) : []
+      // Default to the lowest-multiplicity (highest site-symmetry) position:
+      // real structures occupy special sites, and the general position would
+      // flood the cell with dozens of atoms.
+      const minMultiplicity = Math.min(...data.wyckoffPositions.map((wp) => wp.multiplicity))
+      const position =
+        data.wyckoffPositions.find((wp) => wp.multiplicity === minMultiplicity) ??
+        data.wyckoffPositions[0]
+      selectedWyckoffLetter.value = position?.letter ?? null
+      currentAtoms.value = position ? generateAtoms(data, position.letter) : []
       return true
     } catch (cause) {
       error.value = cause instanceof Error ? cause.message : String(cause)

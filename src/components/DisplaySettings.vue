@@ -12,6 +12,7 @@ function update(partial: Partial<DisplaySettings>) {
 
 const modelTypes: { label: string; value: ModelType }[] = [
   { label: '球棍模型', value: 'ball-stick' },
+  { label: '仅原子', value: 'atoms-only' },
   { label: '空间填充', value: 'space-filling' },
   { label: '线框', value: 'wireframe' },
 ]
