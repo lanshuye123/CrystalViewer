@@ -266,7 +266,9 @@ describe('buildSymmetryMotion', () => {
       [0, 0, 1],
     ], [0, 0, 0])
     const motion = motionOf(operation, hexagonal)
-    expectClose(motion.at(point, 1), fullCartesian(operation, point, hexagonal))
+    const end = motion.at(point, 1)
+    expect(end).toHaveLength(3)
+    expectClose(end, fullCartesian(operation, point, hexagonal))
   })
 
   it('moves halfway along the axis of a 2_1 screw', () => {
@@ -300,7 +302,9 @@ describe('buildSymmetryMotion', () => {
       [0, 0, 1],
     ], [0, 0, 0.5])
     const motion = motionOf(operation, cubic)
-    expectClose(motion.at(point, 1), fullCartesian(operation, point, cubic))
+    const end = motion.at(point, 1)
+    expect(end).toHaveLength(3)
+    expectClose(end, fullCartesian(operation, point, cubic))
   })
 
   it('rotates then pulls through the center of a 4-bar axis', () => {
