@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { computeSymmetryElements } from '@/lib/symmetry-elements'
-import type { OperationType, SymmetryOperation } from '@/types/crystal'
+import {
+  buildSymmetryMotion,
+  computeSymmetryElements,
+  operationOrbit,
+} from '@/lib/symmetry-elements'
+import { fractionalToCartesian, type Vec3 } from '@/lib/lattice'
+import type { LatticeParams, OperationType, SymmetryOperation } from '@/types/crystal'
 
 function op(
   type: OperationType,
@@ -168,5 +173,147 @@ describe('computeSymmetryElements', () => {
       op('glide', 'x, -y, z+1/2', rotation, [0, 0, 0.5]),
     ])
     expect(elements).toHaveLength(2)
+  })
+})
+
+describe('operationOrbit', () => {
+  it('returns a two-point orbit for a 2-fold rotation', () => {
+    const rotation = op('rotation', '-x, -y, z', [
+      [-1, 0, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+    ], [0, 0, 0])
+    const orbit = operationOrbit(rotation, [0.3, 0.1, 0.2])
+    expect(orbit).toHaveLength(2)
+    expect(orbit[1]![0]!).toBeCloseTo(0.7, 6)
+    expect(orbit[1]![1]!).toBeCloseTo(0.9, 6)
+    expect(orbit[1]![2]!).toBeCloseTo(0.2, 6)
+  })
+
+  it('returns the six-point orbit of a 3-bar axis at a general position', () => {
+    const threeBar = op('rotoinversion', 'y, -x+y, -z', [
+      [0, 1, 0],
+      [-1, 1, 0],
+      [0, 0, -1],
+    ], [0, 0, 0])
+    const orbit = operationOrbit(threeBar, [0.31, 0.17, 0.23])
+    expect(orbit).toHaveLength(6)
+    // All points are distinct.
+    const keys = new Set(orbit.map((p) => p.map((v) => v.toFixed(6)).join(',')))
+    expect(keys.size).toBe(6)
+  })
+
+  it('returns a short orbit for a point on the element', () => {
+    const threeBar = op('rotoinversion', 'y, -x+y, -z', [
+      [0, 1, 0],
+      [-1, 1, 0],
+      [0, 0, -1],
+    ], [0, 0, 0])
+    const orbit = operationOrbit(threeBar, [0, 0, 0.3])
+    expect(orbit).toHaveLength(2)
+    expect(orbit[1]![0]!).toBeCloseTo(0, 6)
+    expect(orbit[1]![1]!).toBeCloseTo(0, 6)
+    expect(orbit[1]![2]!).toBeCloseTo(0.7, 6)
+  })
+})
+
+describe('buildSymmetryMotion', () => {
+  const cubic: LatticeParams = { a: 1, b: 1, c: 1, alpha: 90, beta: 90, gamma: 90 }
+  const hexagonal: LatticeParams = { a: 1, b: 1, c: 1.2, alpha: 90, beta: 90, gamma: 120 }
+  const point: Vec3 = [0.3, 0.1, 0.2]
+
+  function motionOf(operation: SymmetryOperation, params: LatticeParams) {
+    const [element] = computeSymmetryElements([operation])
+    expect(element).toBeDefined()
+    return buildSymmetryMotion(element!, params)
+  }
+
+  function fullCartesian(operation: SymmetryOperation, p: Vec3, params: LatticeParams): Vec3 {
+    const r = operation.rotation
+    const frac: Vec3 = [
+      r[0]![0]! * p[0]! + r[0]![1]! * p[1]! + r[0]![2]! * p[2]! + operation.translation[0]!,
+      r[1]![0]! * p[0]! + r[1]![1]! * p[1]! + r[1]![2]! * p[2]! + operation.translation[1]!,
+      r[2]![0]! * p[0]! + r[2]![1]! * p[1]! + r[2]![2]! * p[2]! + operation.translation[2]!,
+    ]
+    return fractionalToCartesian(frac, params)
+  }
+
+  function expectClose(actual: Vec3, expected: Vec3) {
+    for (let i = 0; i < 3; i++) {
+      expect(actual[i]).toBeCloseTo(expected[i]!, 5)
+    }
+  }
+
+  it('starts at the atom and ends on the 2-fold image (cubic)', () => {
+    const operation = op('rotation', '-x, -y, z', [
+      [-1, 0, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+    ], [0, 0, 0])
+    const motion = motionOf(operation, cubic)
+    expectClose(motion.at(point, 0), fractionalToCartesian(point, cubic))
+    expectClose(motion.at(point, 1), fullCartesian(operation, point, cubic))
+    // Halfway through a 2-fold rotation the point has turned 90 degrees.
+    const mid = motion.at(point, 0.5)
+    expect(mid[2]!).toBeCloseTo(0.2, 5)
+    expect(Math.hypot(mid[0]!, mid[1]!)).toBeCloseTo(Math.hypot(0.3, 0.1), 5)
+  })
+
+  it('ends on the 3-fold image in a hexagonal cell', () => {
+    const operation = op('rotation', '-y, x-y, z', [
+      [0, -1, 0],
+      [1, -1, 0],
+      [0, 0, 1],
+    ], [0, 0, 0])
+    const motion = motionOf(operation, hexagonal)
+    expectClose(motion.at(point, 1), fullCartesian(operation, point, hexagonal))
+  })
+
+  it('moves halfway along the axis of a 2_1 screw', () => {
+    const operation = op('screw', '-x, -y, z+1/2', [
+      [-1, 0, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+    ], [0, 0, 0.5])
+    const motion = motionOf(operation, cubic)
+    const mid = motion.at(point, 0.5)
+    expect(mid[2]!).toBeCloseTo(0.45, 5)
+    expectClose(motion.at(point, 1), fullCartesian(operation, point, cubic))
+  })
+
+  it('passes through the mirror plane at half progress', () => {
+    const operation = op('mirror', 'x, -y, z', [
+      [1, 0, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+    ], [0, 0, 0])
+    const motion = motionOf(operation, cubic)
+    const mid = motion.at(point, 0.5)
+    expect(mid[1]!).toBeCloseTo(0, 5)
+    expectClose(motion.at(point, 1), fullCartesian(operation, point, cubic))
+  })
+
+  it('ends on the glide image', () => {
+    const operation = op('glide', 'x, -y, z+1/2', [
+      [1, 0, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+    ], [0, 0, 0.5])
+    const motion = motionOf(operation, cubic)
+    expectClose(motion.at(point, 1), fullCartesian(operation, point, cubic))
+  })
+
+  it('rotates then pulls through the center of a 4-bar axis', () => {
+    const operation = op('rotoinversion', 'y, -x, -z', [
+      [0, 1, 0],
+      [-1, 0, 0],
+      [0, 0, -1],
+    ], [0, 0, 0])
+    const motion = motionOf(operation, cubic)
+    expectClose(motion.at(point, 0), fractionalToCartesian(point, cubic))
+    // End of the rotation phase: still 0.2 above the center on the axis.
+    const rotated = motion.at(point, 0.45)
+    expect(rotated[2]!).toBeCloseTo(0.2, 5)
+    expectClose(motion.at(point, 1), fullCartesian(operation, point, cubic))
   })
 })
