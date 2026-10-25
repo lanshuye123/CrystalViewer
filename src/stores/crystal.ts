@@ -80,6 +80,11 @@ export const useCrystalStore = defineStore('crystal', () => {
     })
   }
 
+  /** Replace the whole hidden set — used by the show-all / hide-all shortcuts. */
+  function setHiddenSymmetryElements(kinds: SymmetryElementKind[]) {
+    setDisplaySettings({ hiddenSymmetryElements: [...kinds] })
+  }
+
   function persistCustomAtoms() {
     saveCustomAtomState({
       inputs: customAtomInputs.value,
@@ -233,6 +238,7 @@ export const useCrystalStore = defineStore('crystal', () => {
     setDisplaySettings,
     setSymmetryElementColor,
     toggleSymmetryElement,
+    setHiddenSymmetryElements,
     setCustomAtomSettings,
     addCustomAtom,
     updateCustomAtom,

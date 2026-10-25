@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Close, RefreshRight, VideoPause, VideoPlay } from '@element-plus/icons-vue'
@@ -48,6 +48,10 @@ const demoPlaying = ref(false)
 const demoOrbitSize = ref(0)
 let selectedRoot: THREE.Object3D | null = null
 let symmetryGroup: THREE.Group | null = null
+/** Live handle on the symmetry group so hover focus can tweak opacity. */
+const symmetryRoot = shallowRef<THREE.Group | null>(null)
+/** Symmetry element kind currently hovered in the legend (null = none). */
+const hoverKind = ref<SymmetryElementKind | null>(null)
 
 const selectedSymbol = computed(() => {
   const element = selectedElement.value
@@ -155,6 +159,27 @@ function elementWorldCenter(element: SymmetryElement): THREE.Vector3 {
   return toVector(fractionalToCartesian(element.origin, params)).add(content.position)
 }
 
+/**
+ * Replicate an atom set across a supercell of size N (1, 2 or 3) along each
+ * axis. The result is `atoms` plus a list of integer-lattice translations
+ * for every replica, which `buildAtoms` renders as additional spheres.
+ */
+function buildAtomCluster(atoms: AtomSite[]): { atoms: AtomSite[]; replicas: NeighborReplica[] } {
+  const N = store.displaySettings.superCell
+  if (N <= 1) return { atoms, replicas: [] }
+  const replicas: NeighborReplica[] = []
+  const span = N - 1
+  for (let i = -span; i <= span; i++) {
+    for (let j = -span; j <= span; j++) {
+      for (let k = -span; k <= span; k++) {
+        if (i === 0 && j === 0 && k === 0) continue
+        for (let a = 0; a < atoms.length; a++) replicas.push({ atom: a, offset: [i, j, k] })
+      }
+    }
+  }
+  return { atoms, replicas }
+}
+
 /** Aim the camera straight at one element: face-on for planes, side-on for axes. */
 function frameElement(element: SymmetryElement) {
   if (!camera || !controls) return
@@ -177,8 +202,14 @@ function frameElement(element: SymmetryElement) {
   }
 
   const target = elementWorldCenter(element)
-  const distance = Math.max(camera.position.distanceTo(controls.target), lastFitRadius * 0.9)
+  const distance = Math.max(camera.position.distanceTo(controls.target), lastFitRadius * clusterRadiusMultiplier())
   tweenCameraTo(target.clone().addScaledVector(view, distance), target)
+}
+
+/** Multiplier on `lastFitRadius` so framing honours the current supercell size. */
+function clusterRadiusMultiplier(): number {
+  const N = store.displaySettings.superCell
+  return N >= 3 ? 2.4 : N >= 2 ? 1.5 : 1
 }
 
 /** Orient the camera so the cell's symmetry elements are clearly in view. */
@@ -225,7 +256,7 @@ function frameAllSymmetry() {
   }
 
   const target = new THREE.Vector3(0, 0, 0)
-  const distance = Math.max(lastFitRadius, camera.position.distanceTo(controls.target) * 0.8)
+  const distance = Math.max(lastFitRadius * clusterRadiusMultiplier(), camera.position.distanceTo(controls.target) * 0.8)
   tweenCameraTo(target.clone().addScaledVector(view, distance), target)
 }
 
@@ -456,29 +487,51 @@ function orthonormalBasis(direction: THREE.Vector3): [THREE.Vector3, THREE.Vecto
 }
 
 /** Build a translucent mirror/glide plane with a border and a glide arrow. */
+/**
+ * Faint grid drawn on top of a symmetry plane: it reads as "helper surface"
+ * instead of a solid body and keeps planes distinguishable from atoms.
+ */
+function buildPlaneGrid(color: THREE.Color, extent: number, opacity: number): THREE.LineSegments {
+  const half = extent / 2
+  const divisions = 4
+  const points: THREE.Vector3[] = []
+  for (let i = 1; i < divisions; i++) {
+    const t = -half + (extent * i) / divisions
+    points.push(new THREE.Vector3(t, -half, 0), new THREE.Vector3(t, half, 0))
+    points.push(new THREE.Vector3(-half, t, 0), new THREE.Vector3(half, t, 0))
+  }
+  return new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints(points),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity }),
+  )
+}
+
 function buildSymmetryPlane(
   element: SymmetryElement,
   color: THREE.Color,
   foot: THREE.Vector3,
   normal: THREE.Vector3,
   extent: number,
+  opacity: number,
 ): THREE.Group {
   const params = store.currentSpaceGroup!.latticeParams
   const plane = new THREE.Group()
-  const half = extent / 2
+  const size = extent * 0.9
+  const half = size / 2
 
   plane.add(
     new THREE.Mesh(
-      new THREE.PlaneGeometry(extent, extent),
+      new THREE.PlaneGeometry(size, size),
       new THREE.MeshBasicMaterial({
         color,
         transparent: true,
-        opacity: 0.13,
+        opacity: opacity * 0.5,
         side: THREE.DoubleSide,
         depthWrite: false,
       }),
     ),
   )
+  plane.add(buildPlaneGrid(color, size, opacity * 0.35))
 
   const borderGeometry = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(-half, -half, 0),
@@ -493,7 +546,7 @@ function buildSymmetryPlane(
       new THREE.LineDashedMaterial({
         color,
         transparent: true,
-        opacity: 0.95,
+        opacity: opacity + 0.2,
         dashSize: extent * 0.05,
         gapSize: extent * 0.035,
       }),
@@ -513,18 +566,15 @@ function buildSymmetryPlane(
           new THREE.Line(
             new THREE.BufferGeometry().setFromPoints([
               local.clone().multiplyScalar(-0.5),
-              local
-                .clone()
-                .multiplyScalar(-0.5)
-                .addScaledVector(direction, shaftLength),
+              local.clone().multiplyScalar(-0.5).addScaledVector(direction, shaftLength),
             ]),
-            new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }),
+            new THREE.LineBasicMaterial({ color, transparent: true, opacity: opacity + 0.3 }),
           ),
         )
         const headLength = arrowLength - shaftLength
         const head = new THREE.Mesh(
           new THREE.ConeGeometry(headLength * 0.45, headLength, 10),
-          new THREE.MeshBasicMaterial({ color }),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: opacity + 0.3 }),
         )
         head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
         head.position
@@ -537,7 +587,7 @@ function buildSymmetryPlane(
     plane.add(
       new THREE.LineLoop(
         borderGeometry,
-        new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 }),
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: opacity + 0.2 }),
       ),
     )
   }
@@ -554,10 +604,11 @@ function buildScrewHelix(
   direction: THREE.Vector3,
   extent: number,
   axisLength: number,
+  opacity: number,
 ): THREE.Line {
   const [u, v] = orthonormalBasis(direction)
-  const radius = extent * 0.035
-  const helixLength = extent * 0.22
+  const radius = extent * 0.03
+  const helixLength = extent * 0.2
   const turns = 1.25
   const segments = 48
   const top = foot.clone().addScaledVector(direction, axisLength / 2)
@@ -575,8 +626,26 @@ function buildScrewHelix(
   }
   return new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: opacity + 0.25 }),
   )
+}
+
+/** Small cone marking the positive end of an axis. */
+function buildAxisArrow(
+  color: THREE.Color,
+  tip: THREE.Vector3,
+  direction: THREE.Vector3,
+  extent: number,
+  opacity: number,
+): THREE.Mesh {
+  const length = extent * 0.05
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(extent * 0.016, length, 12),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: opacity + 0.25 }),
+  )
+  cone.position.copy(tip)
+  cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
+  return cone
 }
 
 /** Build a rotation/screw/rotoinversion axis with fold-order labels. */
@@ -586,9 +655,10 @@ function buildSymmetryAxis(
   foot: THREE.Vector3,
   direction: THREE.Vector3,
   extent: number,
+  opacity: number,
 ): THREE.Group {
   const group = new THREE.Group()
-  const axisLength = extent * 1.35
+  const axisLength = extent * 1.05
   const label = axisLabel(element)
   const hex = `#${color.getHexString()}`
 
@@ -602,7 +672,7 @@ function buildSymmetryAxis(
       new THREE.LineDashedMaterial({
         color,
         transparent: true,
-        opacity: 0.9,
+        opacity: opacity + 0.25,
         dashSize: extent * 0.06,
         gapSize: extent * 0.04,
       }),
@@ -610,16 +680,26 @@ function buildSymmetryAxis(
     line.computeLineDistances()
     group.add(line)
   } else {
-    const radius = extent * 0.008
+    // Thin translucent tube instead of a fat solid rod.
+    const radius = extent * 0.005
     const axis = new THREE.Mesh(
       new THREE.CylinderGeometry(radius, radius, axisLength, 10),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 }),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: opacity + 0.12 }),
     )
     axis.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction)
     axis.position.copy(foot)
     group.add(axis)
+    group.add(
+      buildAxisArrow(
+        color,
+        foot.clone().addScaledVector(direction, axisLength / 2),
+        direction,
+        extent,
+        opacity,
+      ),
+    )
     if (element.kind === 'screw') {
-      group.add(buildScrewHelix(color, foot, direction, extent, axisLength))
+      group.add(buildScrewHelix(color, foot, direction, extent, axisLength, opacity))
     }
   }
 
@@ -641,27 +721,77 @@ function buildSymmetryElements(elements: SymmetryElement[]): THREE.Group {
   const box = new THREE.Box3().setFromPoints(corners)
   const size = box.getSize(new THREE.Vector3())
   const extent = Math.max(size.x, size.y, size.z)
+  const centre = box.getCenter(new THREE.Vector3())
   const hidden = store.displaySettings.hiddenSymmetryElements
+  const opacity = store.displaySettings.symmetryOpacity
+  const cullRadius = store.displaySettings.symmetryRadius
+  // 0 keeps every element; otherwise only the neighbourhood of the cell centre
+  // is drawn, which removes the "spider web" of far-away copies.
+  const maxDistance = cullRadius > 0 ? cullRadius * extent : Number.POSITIVE_INFINITY
 
   for (const element of elements) {
     if (hidden.includes(element.kind)) continue
     const color = new THREE.Color(store.displaySettings.symmetryColors[element.kind])
     const foot = toVector(fractionalToCartesian(element.origin, params))
+    if (foot.distanceTo(centre) > maxDistance) continue
     const direction = toVector(fractionalToCartesian(element.direction, params)).normalize()
     // Wrapper carries the element for scene picking.
     const wrapper = new THREE.Group()
     wrapper.userData.element = element
+    wrapper.userData.baseOpacity = opacity
     if (element.kind === 'mirror' || element.kind === 'glide') {
-      wrapper.add(buildSymmetryPlane(element, color, foot, direction, extent))
+      wrapper.add(buildSymmetryPlane(element, color, foot, direction, extent, opacity))
     } else {
-      wrapper.add(buildSymmetryAxis(element, color, foot, direction, extent))
+      wrapper.add(buildSymmetryAxis(element, color, foot, direction, extent, opacity))
     }
     group.add(wrapper)
   }
   return group
 }
 
-/** Raise/lower the opacity of every material below a symmetry element root. */
+/**
+ * Hover focus: highlight one symmetry element kind in 3D and push everything
+ * else into the background. Passing null restores the base opacity.
+ */
+function applyLegendFocus(kind: SymmetryElementKind | null) {
+  const root = symmetryRoot.value
+  if (!root) return
+  for (const child of root.children) {
+    const element = child.userData.element as SymmetryElement | undefined
+    const match = !kind || element?.kind === kind
+    child.traverse((node) => {
+      const raw = (node as THREE.Mesh).material as
+        | (THREE.Material & { opacity: number; transparent: boolean; userData: Record<string, unknown> })
+        | undefined
+      if (!raw) return
+      if (raw.userData.focusBase === undefined) raw.userData.focusBase = raw.opacity
+      const base = raw.userData.focusBase as number
+      raw.transparent = true
+      if (kind === null) raw.opacity = base
+      else if (match) raw.opacity = Math.min(1, base * 2.4)
+      else raw.opacity = Math.max(0.03, base * 0.22)
+    })
+  }
+}
+
+function showAllSymmetry() {
+  store.setHiddenSymmetryElements([])
+}
+
+function hideAllSymmetry() {
+  store.setHiddenSymmetryElements(symmetryLegend.value.map((item) => item.kind))
+}
+
+function toggleXray() {
+  const next = !store.displaySettings.xrayMode
+  store.setDisplaySettings({
+    xrayMode: next,
+    symmetryOpacity: next ? 0.16 : 0.28,
+  })
+}
+
+watch(hoverKind, (kind) => applyLegendFocus(kind))
+
 function setEmphasis(root: THREE.Object3D | null, on: boolean) {
   if (!root) return
   root.traverse((child) => {
@@ -728,11 +858,15 @@ function lightStation(state: DemoState, index: number) {
   if (!match) return
   match.mesh.setColorAt(match.id, DEMO_HIGHLIGHT)
   if (match.mesh.instanceColor) match.mesh.instanceColor.needsUpdate = true
+  const point = state.orbit[index]
+  if (point) addStationMarker(point)
 }
 
 /** Dim atoms and bonds so the demo stands out. */
 function dimScene() {
   content.traverse((child) => {
+    // Demo objects (ghost, generated-site markers) must stay bright.
+    if (child.userData?.demoObject) return
     const material = (child as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined
     if (material && (material as unknown as { isMeshStandardMaterial?: boolean }).isMeshStandardMaterial) {
       material.transparent = true
@@ -748,6 +882,94 @@ function undimScene() {
       material.transparent = false
       material.opacity = 1
     }
+  })
+}
+
+/** Persistent markers for the equivalent sites generated by the operation. */
+const demoMarkers: THREE.Object3D[] = []
+
+function clearStationMarkers() {
+  for (const marker of demoMarkers) {
+    if (marker.parent) marker.parent.remove(marker)
+    disposeObject(marker)
+  }
+  demoMarkers.length = 0
+}
+
+/**
+ * Bright sphere + soft halo marking one generated equivalent position.
+ * The background atoms are dimmed during the demo, so these markers are what
+ * makes "this site was generated by the operation" readable.
+ */
+function addStationMarker(point: Vec3) {
+  const params = store.currentSpaceGroup!.latticeParams
+  const seedAtom = demoSeed()
+  const center = toVector(fractionalToCartesian(point, params))
+  const radius = seedAtom ? atomRadius(seedAtom.element) : params.a * 0.075
+
+  const core = new THREE.Mesh(
+    new THREE.SphereGeometry(radius * 1.02, 24, 16),
+    new THREE.MeshStandardMaterial({
+      color: DEMO_HIGHLIGHT,
+      emissive: DEMO_HIGHLIGHT.clone().multiplyScalar(0.6),
+      emissiveIntensity: 1.15,
+      roughness: 0.28,
+    }),
+  )
+  core.position.copy(center)
+  core.userData.demoObject = true
+  content.add(core)
+  demoMarkers.push(core)
+
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(radius * 1.75, 20, 14),
+    new THREE.MeshBasicMaterial({
+      color: DEMO_HIGHLIGHT,
+      transparent: true,
+      opacity: 0.2,
+      depthWrite: false,
+    }),
+  )
+  halo.position.copy(center)
+  halo.userData.demoObject = true
+  content.add(halo)
+  demoMarkers.push(halo)
+}
+
+/**
+ * Push the animated symmetry element to the front with an opacity floor, so it
+ * stays the star of the demo even when helper graphics are set very faint.
+ */
+function emphasizeElement(root: THREE.Object3D | null, on: boolean) {
+  if (!root) return
+  root.traverse((child) => {
+    const material = (child as THREE.Mesh).material as
+      | (THREE.Material & { opacity: number; transparent: boolean; userData: Record<string, unknown> })
+      | undefined
+    if (!material) return
+    if (on) {
+      if (material.userData.emphBase === undefined) material.userData.emphBase = material.opacity
+      const base = material.userData.emphBase as number
+      material.transparent = true
+      material.opacity = Math.min(1, Math.max(base, 0.85))
+    } else if (material.userData.emphBase !== undefined) {
+      material.opacity = material.userData.emphBase as number
+      material.transparent = material.opacity < 1
+      delete material.userData.emphBase
+    }
+  })
+}
+
+/** Gentle breathing on the animated element (called from the render loop). */
+function pulseSymmetry(elapsed: number) {
+  if (!selectedRoot) return
+  const value = 0.85 + 0.1 * Math.sin(elapsed * Math.PI * 2 * 0.8)
+  selectedRoot.traverse((child) => {
+    const material = (child as THREE.Mesh).material as
+      | (THREE.Material & { opacity: number; userData: Record<string, unknown> })
+      | undefined
+    if (!material || material.userData.emphBase === undefined) return
+    material.opacity = Math.min(1, value)
   })
 }
 
@@ -782,6 +1004,7 @@ function startDemo() {
     }),
   )
   ghost.position.copy(toVector(fractionalToCartesian(orbit[0]!, params)))
+  ghost.userData.demoObject = true
   content.add(ghost)
 
   // Trail line that follows the ghost atom and fades out behind it.
@@ -811,6 +1034,7 @@ function startDemo() {
   for (const child of symmetryGroup?.children ?? []) {
     if (child !== selectedRoot) child.visible = false
   }
+  emphasizeElement(selectedRoot, true)
   lightStation(state, 0)
   demoPlaying.value = true
 }
@@ -822,15 +1046,19 @@ function stopDemo(keepSelection = false) {
     if (demo.trailLine.parent) demo.trailLine.parent.remove(demo.trailLine)
     disposeObject(demo.trailLine)
     demo = null
+    clearStationMarkers()
     undimScene()
     restoreAtomColors()
     for (const child of symmetryGroup?.children ?? []) child.visible = true
   }
   demoPlaying.value = false
+  emphasizeElement(selectedRoot, false)
   if (!keepSelection) {
     selectedElement.value = null
     setEmphasis(selectedRoot, false)
     selectedRoot = null
+  } else if (selectedRoot) {
+    setEmphasis(selectedRoot, true)
   }
 }
 
@@ -915,6 +1143,7 @@ function updateDemo(dt: number) {
   if (phase < demo.prevPhase) {
     // A new cycle starts: clear highlights, relight the seed site.
     restoreAtomColors()
+    clearStationMarkers()
     demo.trail = []
     lightStation(demo, 0)
     demo.lit = 0
@@ -923,6 +1152,7 @@ function updateDemo(dt: number) {
 
   // Breathing pulse keeps the moving atom easy to follow.
   demo.ghost.scale.setScalar(1 + 0.22 * Math.sin(demo.elapsed * Math.PI * 2 * 1.2))
+  pulseSymmetry(demo.elapsed)
 
   const segment = Math.floor(phase / (DEMO_STATION + DEMO_GAP))
   if (segment >= K) {
@@ -977,12 +1207,22 @@ function clearContent() {
 function fitView() {
   const group = store.currentSpaceGroup
   if (!group || !camera || !controls) return
-  const corners = cellCorners(group.latticeParams).map(toVector)
+  const N = store.displaySettings.superCell
+  // Span the entire supercell when replicating atoms; otherwise the single
+  // unit cell.
+  const corners: THREE.Vector3[] = []
+  for (let k = 0; k <= N; k++) {
+    for (let j = 0; j <= N; j++) {
+      for (let i = 0; i <= N; i++) {
+        corners.push(toVector(fractionalToCartesian([i, j, k], group.latticeParams)))
+      }
+    }
+  }
   const box = new THREE.Box3().setFromPoints(corners)
   const center = box.getCenter(new THREE.Vector3())
   const sphere = box.getBoundingSphere(new THREE.Sphere())
   content.position.copy(center.clone().negate())
-  const distance = Math.max(sphere.radius, 1) * 2.8
+  const distance = Math.max(sphere.radius, 1) * 2.4
   lastFitRadius = distance
   const direction = new THREE.Vector3(1, 0.85, 1).normalize()
   camera.position.copy(direction.multiplyScalar(distance))
@@ -1012,8 +1252,30 @@ function rebuild() {
     store.displaySettings.modelType !== 'atoms-only'
   const renderAtomSet = (atoms: AtomSite[]) => {
     if (!atoms.length) return
+    const cluster = buildAtomCluster(atoms)
+    if (wantBonds && cluster.replicas.length) {
+      // With a supercell the periodic-image search is unnecessary (and would
+      // produce duplicate interior bonds): search the replicated atoms directly.
+      const directAtoms = atoms.concat(
+        ...cluster.replicas.map((replica) => {
+          const atom = atoms[replica.atom]!
+          return {
+            ...atom,
+            fractionalCoords: [
+              atom.fractionalCoords[0] + replica.offset[0],
+              atom.fractionalCoords[1] + replica.offset[1],
+              atom.fractionalCoords[2] + replica.offset[2],
+            ] as [number, number, number],
+          }
+        }),
+      )
+      const bondResult = computeBonds(directAtoms, group.latticeParams, { mode: 'direct' })
+      content.add(buildAtoms(cluster.atoms, cluster.replicas))
+      if (bondResult.bonds.length) content.add(buildBonds(directAtoms, bondResult))
+      return
+    }
     const bondResult = wantBonds ? computeBonds(atoms, group.latticeParams) : null
-    content.add(buildAtoms(atoms, bondResult?.replicas ?? []))
+    content.add(buildAtoms(cluster.atoms, cluster.replicas))
     if (bondResult) content.add(buildBonds(atoms, bondResult))
   }
 
@@ -1022,6 +1284,7 @@ function rebuild() {
   symmetryCounts.value = {}
   symmetryGroup = null
   lastSymmetryElements = []
+  if (!store.displaySettings.showSymmetryElements) symmetryRoot.value = null
   if (store.displaySettings.showSymmetryElements) {
     const elements = computeSymmetryElements(group.symmetryOperations)
     const counts: Partial<Record<SymmetryElementKind, number>> = {}
@@ -1031,7 +1294,9 @@ function rebuild() {
     symmetryCounts.value = counts
     lastSymmetryElements = elements
     symmetryGroup = buildSymmetryElements(elements)
+    symmetryRoot.value = symmetryGroup
     content.add(symmetryGroup)
+    if (hoverKind.value) applyLegendFocus(hoverKind.value)
   }
   // The scene was rebuilt: re-attach the selection and demo to fresh objects.
   demo = null
@@ -1280,14 +1545,31 @@ watch(
         v-if="store.displaySettings.showSymmetryElements && symmetryLegend.length"
         class="viewer__legend glass-panel"
       >
-        <div class="viewer__legend-title">对称元素</div>
+        <div class="viewer__legend-head">
+          <span class="viewer__legend-title">对称元素</span>
+          <div class="viewer__legend-actions">
+            <button type="button" class="viewer__legend-btn" @click="showAllSymmetry">全部显示</button>
+            <button type="button" class="viewer__legend-btn" @click="hideAllSymmetry">全部隐藏</button>
+          </div>
+        </div>
         <div
           v-for="item in symmetryLegend"
           :key="item.kind"
           class="viewer__legend-item"
-          :class="{ 'is-hidden': item.hidden }"
+          :class="{ 'is-hidden': item.hidden, 'is-active': selectedElement?.kind === item.kind }"
+          role="button"
+          :aria-pressed="!item.hidden"
           @click="store.toggleSymmetryElement(item.kind)"
+          @mouseenter="hoverKind = item.kind"
+          @mouseleave="hoverKind = null"
         >
+          <el-checkbox
+            class="viewer__legend-check"
+            :model-value="!item.hidden"
+            size="small"
+            @click.stop
+            @change="store.toggleSymmetryElement(item.kind)"
+          />
           <el-color-picker
             class="viewer__legend-color"
             :model-value="item.color"
@@ -1301,7 +1583,7 @@ watch(
           <span class="viewer__legend-label">{{ item.label }}</span>
           <span class="viewer__legend-count">{{ item.count }}</span>
         </div>
-        <div class="viewer__legend-tip">点击色块调色 · 点击行显隐</div>
+        <div class="viewer__legend-tip">勾选单独显隐 · 悬停可在 3D 中高亮该类</div>
       </div>
 
       <el-card v-if="selectedElement" class="viewer__symdemo glass-panel" shadow="never">
@@ -1335,6 +1617,17 @@ watch(
         <div class="viewer__symdemo-tip">再次点击该对称元素可重播动画</div>
       </el-card>
     </div>
+      <div v-if="store.displaySettings.showSymmetryElements" class="viewer__quicktools glass-panel">
+        <button
+          type="button"
+          class="viewer__quicktools-btn"
+          :class="{ 'is-on': store.displaySettings.xrayMode }"
+          :aria-pressed="store.displaySettings.xrayMode"
+          @click="toggleXray"
+        >
+          透视模式
+        </button>
+      </div>
 
     <div v-if="store.currentSpaceGroup" class="viewer__hint">
       拖拽旋转 · 滚轮缩放{{
@@ -1463,12 +1756,82 @@ watch(
   background: rgba(79, 110, 247, 0.08);
 }
 
+.viewer__legend-item.is-active {
+  background: rgba(109, 139, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(109, 139, 255, 0.55);
+}
+
 .viewer__legend-item.is-hidden {
   opacity: 0.42;
 }
 
 .viewer__legend-item.is-hidden .viewer__legend-label {
   text-decoration: line-through;
+}
+
+.viewer__legend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.viewer__legend-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.viewer__legend-btn {
+  padding: 2px 7px;
+  border: 1px solid var(--el-border-color, rgba(148, 163, 184, 0.4));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.viewer__legend-btn:hover {
+  opacity: 1;
+  background: rgba(148, 163, 184, 0.16);
+}
+
+.viewer__legend-check {
+  margin-right: 0;
+  height: auto;
+}
+
+.viewer__quicktools {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+}
+
+.viewer__quicktools-btn {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.viewer__quicktools-btn:hover {
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.viewer__quicktools-btn.is-on {
+  border-color: #60a5fa;
+  color: #60a5fa;
 }
 
 .viewer__legend-color {

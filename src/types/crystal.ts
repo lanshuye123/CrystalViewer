@@ -95,10 +95,28 @@ export interface DisplaySettings {
   atomRadiusScale: number
   modelType: ModelType
   background: BackgroundTheme
+  /**
+   * Number of unit cells rendered along each axis (1, 2 or 3). A supercell
+   * spreads atoms across multiple cells so symmetry orbits and bond networks
+   * are visible at a glance.
+   */
+  superCell: 1 | 2 | 3
   /** User-adjustable color per symmetry element kind (hex string). */
   symmetryColors: Record<SymmetryElementKind, string>
   /** Symmetry element kinds currently hidden from the 3D view. */
   hiddenSymmetryElements: SymmetryElementKind[]
+  /**
+   * Opacity of the symmetry helper graphics. They are guides, not the subject:
+   * keep this low so atoms stay readable.
+   */
+  symmetryOpacity: number
+  /**
+   * Distance culling: only elements whose origin lies within this radius
+   * (in cell-size units, measured from the cell centre) are drawn. 0 = no limit.
+   */
+  symmetryRadius: number
+  /** X-ray mode: everything translucent so buried elements stay visible. */
+  xrayMode: boolean
 }
 
 export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
@@ -109,6 +127,7 @@ export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
   atomRadiusScale: 0.5,
   modelType: 'ball-stick',
   background: 'dark',
+  superCell: 2,
   symmetryColors: {
     mirror: '#22c55e',
     glide: '#06b6d4',
@@ -117,6 +136,9 @@ export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
     rotoinversion: '#a855f7',
   },
   hiddenSymmetryElements: [],
+  symmetryOpacity: 0.28,
+  symmetryRadius: 0,
+  xrayMode: false,
 }
 
 export const CRYSTAL_SYSTEM_LABELS: Record<CrystalSystem, string> = {
