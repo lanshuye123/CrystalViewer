@@ -69,4 +69,17 @@ describe('computeBonds', () => {
     expect(result.bonds).toHaveLength(0)
     expect(result.replicas).toHaveLength(0)
   })
+
+  it('supports direct mode without periodic-image search', () => {
+    // Same geometry as the first periodic test, but mode: 'direct' only
+    // checks the atom pair as given — no offset neighbours.
+    const direct = computeBonds(
+      [atom('a', [0, 0, 0]), atom('b', [0.2, 0, 0])],
+      cubic(3.6),
+      { mode: 'direct' },
+    )
+    expect(direct.bonds).toHaveLength(1)
+    expect(direct.bonds[0]).toMatchObject({ i: 0, j: 1, offset: [0, 0, 0] })
+    expect(direct.replicas).toHaveLength(0)
+  })
 })

@@ -7,6 +7,13 @@ export interface BondOptions {
   tolerance?: number
   /** Skip pairs closer than this distance (Å) — near-degenerate sites. */
   minDistance?: number
+  /**
+   * `periodic` (default) searches 27 neighbour cell images — use for atoms
+   * inside a single unit cell.
+   * `direct` only checks the atoms as given, without periodic images — use
+   * when the caller has already replicated atoms into a supercell.
+   */
+  mode?: 'periodic' | 'direct'
 }
 
 /** A bond between atom `i` and the periodic image of atom `j` at `j + offset`. */
@@ -52,6 +59,7 @@ export function computeBonds(
 ): BondResult {
   const tolerance = options.tolerance ?? 1.15
   const minDistance = options.minDistance ?? 0.4
+  const direct = options.mode === 'direct'
 
   const bonds: Bond[] = []
   const replicaKeys = new Set<string>()
@@ -60,10 +68,13 @@ export function computeBonds(
   const positions = atoms.map((atom) => atom.fractionalCoords)
   const radii = atoms.map((atom) => covalentRadius(atom.element))
 
+  const offsets: ReadonlyArray<Vec3> = direct ? [[0, 0, 0]] : OFFSETS
+
   for (let i = 0; i < atoms.length; i++) {
-    for (let j = i; j < atoms.length; j++) {
+    const jStart = direct ? i + 1 : i
+    for (let j = jStart; j < atoms.length; j++) {
       const cutoff = (radii[i]! + radii[j]!) * tolerance
-      for (const offset of OFFSETS) {
+      for (const offset of offsets) {
         // Skip the degenerate self pair (atom with its own image at offset 0).
         if (i === j && offset[0] === 0 && offset[1] === 0 && offset[2] === 0) continue
 
